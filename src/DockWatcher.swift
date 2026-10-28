@@ -17,6 +17,7 @@ extension Notification.Name {
 ///   preferences file;
 /// - display changes.
 /// Bursts are coalesced (see post()).
+@MainActor
 final class DockWatcher {
   static let shared = DockWatcher()
 
@@ -28,16 +29,16 @@ final class DockWatcher {
   func start() {
     let ws = NSWorkspace.shared.notificationCenter
     for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
-      ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+      ws.observeOnMain(name) { [weak self] note in
         let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
         // A restarted Dock is a new process to observe.
         if app?.bundleIdentifier == "com.apple.dock" { self?.observeDock() }
         self?.post()
       }
     }
-    NotificationCenter.default.addObserver(
-      forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-    ) { [weak self] _ in self?.post() }
+    NotificationCenter.default.observeOnMain(NSApplication.didChangeScreenParametersNotification) { [weak self] _ in
+      self?.post()
+    }
     let prefs = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent("Library/Preferences/com.apple.dock.plist")
     prefsWatcher = FileWatcher(prefs) { [weak self] in self?.post() }
@@ -59,7 +60,10 @@ final class DockWatcher {
     var created: AXObserver?
     let callback: AXObserverCallback = { _, _, _, refcon in
       guard let refcon else { return }
-      Unmanaged<DockWatcher>.fromOpaque(refcon).takeUnretainedValue().post()
+      // Delivered on the main run loop (see below).
+      MainActor.assumeIsolated {
+        Unmanaged<DockWatcher>.fromOpaque(refcon).takeUnretainedValue().post()
+      }
     }
     guard AXObserverCreate(pid, callback, &created) == .success, let created else { return }
     let refcon = Unmanaged.passUnretained(self).toOpaque()

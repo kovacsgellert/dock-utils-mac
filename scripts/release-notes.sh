@@ -5,6 +5,7 @@
 #   final tag: that section plus all prerelease sections of the same
 #   version (everything since the previous non-prerelease).
 # Prints Markdown with a "# <tag>" title to stdout.
+# CHANGELOG=<path> reads another file (for tests).
 set -euo pipefail
 TAG="${1:?usage: release-notes.sh <tag>}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,4 +24,4 @@ awk -v tag="$TAG" -v base="$BASE" '
   }
   collect && !started && NF == 0 { next }
   collect { started = 1; print }
-' "$ROOT/CHANGELOG.md"
+' "${CHANGELOG:-$ROOT/CHANGELOG.md}"

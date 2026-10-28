@@ -53,8 +53,6 @@ private extension NSShadow {
   }
 }
 
-/// Floating number badges beside Dock icons.
-/// AX frames use a top-left origin; Cocoa windows use bottom-left, so we flip Y.
 /// Badge presentation style.
 enum BadgeStyle {
   /// Option-hold: large badges beside icons, toward the screen center.
@@ -64,28 +62,34 @@ enum BadgeStyle {
   case persistent
 }
 
+/// Floating number badges beside Dock icons, on the real Dock and on the
+/// Dock clones.
+@MainActor
 final class OverlayManager {
+  /// Reused from one show to the next; the first `shownCount` are on screen.
   private var panels: [NSPanel] = []
+  private var shownCount = 0
   /// What the panels currently show (nil = hidden). Lets the watcher tell
   /// a hold overlay apart from persistent mini-badges.
   private(set) var styleShown: BadgeStyle?
-  private let holdSize: CGFloat = 28
-  private let persistentSize: CGFloat = 20
+  private static let holdSize: CGFloat = 28
+  private static let persistentSize: CGFloat = 20
   /// Inset of persistent badges from the icon corner (keeps them on the icon).
-  private let cornerInset: CGFloat = 2
-  private let gap: CGFloat = 8
+  private static let cornerInset: CGFloat = 2
+  private static let gap: CGFloat = 8
 
+  /// Show badges for `apps`, replacing whatever is shown. Panels already
+  /// on screen move in place; only newly shown ones fade in.
   func show(apps: [DockApp], style: BadgeStyle = .hold) {
-    hide()
     // Only 1–9 and 0 have keys: an 11th app would repeat the 1st's number.
     let apps = apps.filter { $0.index <= 10 }
     let dark = AppAppearance.isDark
-    let diameter = style == .hold ? holdSize : persistentSize
+    let diameter = style == .hold ? Self.holdSize : Self.persistentSize
     let icons = apps.map { (app: $0, icon: Coords.flip($0.frame)) }
     // The real Dock's display, which needn't be the main one. Badges go on
     // the side of its edge facing the screen center.
     let dockRect = icons.map(\.icon).reduce(CGRect.null) { $0.union($1) }
-    guard let screen = NSScreen.containing(dockRect) else { return }
+    guard let screen = NSScreen.containing(dockRect) else { hide(); return }
     let edge = DockPrefs.read().edge
     // The real Dock's inner (screen-center-facing) edge on a side Dock:
     // where visibleFrame begins or ends (nil when auto-hidden, as it then
@@ -110,40 +114,50 @@ final class OverlayManager {
       fullscreen.contains { $0.frame.contains(CGPoint(x: target.icon.midX, y: target.icon.midY)) }
     }
 
-    for (app, icon, edge, dockInnerX) in targets {
-      let origin = badgeOrigin(for: icon, edge: edge, dockInnerX: dockInnerX, diameter: diameter, style: style)
-      let panel = NSPanel(
-        contentRect: CGRect(origin: origin, size: CGSize(width: diameter, height: diameter)),
-        styleMask: [.borderless, .nonactivatingPanel],
-        backing: .buffered,
-        defer: false
-      )
-      panel.level = .screenSaver
-      panel.isOpaque = false
-      panel.backgroundColor = .clear
+    for (i, (app, icon, edge, dockInnerX)) in targets.enumerated() {
+      let origin = Self.badgeOrigin(for: icon, edge: edge, dockInnerX: dockInnerX, diameter: diameter, style: style)
+      if i == panels.count { panels.append(Self.makePanel()) }
+      let panel = panels[i]
+      panel.setFrame(CGRect(origin: origin, size: CGSize(width: diameter, height: diameter)), display: false)
       panel.hasShadow = style == .hold
-      panel.ignoresMouseEvents = true
-      panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-
       panel.contentView = GlassBadgeView(diameter: diameter, text: "\(app.index % 10)", dark: dark)
+      guard i >= shownCount else { continue }
       panel.alphaValue = 0
       panel.orderFrontRegardless()
       NSAnimationContext.runAnimationGroup { ctx in
         ctx.duration = 0.12
         panel.animator().alphaValue = 1
       }
-      panels.append(panel)
     }
+    for panel in panels[targets.count..<max(shownCount, targets.count)] { panel.orderOut(nil) }
+    shownCount = targets.count
     styleShown = style
   }
 
   func hide() {
-    for p in panels { p.orderOut(nil) }
-    panels.removeAll()
+    for p in panels[..<shownCount] { p.orderOut(nil) }
+    shownCount = 0
     styleShown = nil
   }
 
-  private func badgeOrigin(for icon: CGRect, edge: DockEdge, dockInnerX: CGFloat?, diameter: CGFloat, style: BadgeStyle) -> CGPoint {
+  private static func makePanel() -> NSPanel {
+    let panel = NSPanel(
+      contentRect: .zero,
+      styleMask: [.borderless, .nonactivatingPanel],
+      backing: .buffered,
+      defer: false
+    )
+    panel.level = .screenSaver
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.ignoresMouseEvents = true
+    panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+    return panel
+  }
+
+  /// Where a badge goes for an icon (Cocoa coordinates): beside it toward
+  /// the screen center while holding Option, on its corner when persistent.
+  static func badgeOrigin(for icon: CGRect, edge: DockEdge, dockInnerX: CGFloat?, diameter: CGFloat, style: BadgeStyle) -> CGPoint {
     switch style {
     case .persistent:
       // A corner of the icon, inset so the badge sits on the icon, inside
@@ -176,5 +190,4 @@ final class OverlayManager {
       }
     }
   }
-
 }

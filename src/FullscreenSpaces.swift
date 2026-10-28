@@ -9,6 +9,7 @@ extension Notification.Name {
 /// Displays showing a full-screen app. The real Dock hides in a full-screen
 /// Space, so the Dock clones and shortcut badges stay off those displays too.
 /// Panels that join all Spaces would otherwise show over the full-screen app.
+@MainActor
 final class FullscreenSpaces {
   static let shared = FullscreenSpaces()
 
@@ -20,15 +21,12 @@ final class FullscreenSpaces {
     // full-screen Space); the check reads the windows' own AXFullScreen
     // state, so fullscreen detection never polls. Display changes and a
     // permission change can alter what is visible too.
-    NSWorkspace.shared.notificationCenter.addObserver(
-      forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
-    ) { [weak self] _ in self?.mayHaveChanged() }
-    NotificationCenter.default.addObserver(
-      forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-    ) { [weak self] _ in self?.mayHaveChanged() }
-    NotificationCenter.default.addObserver(
-      forName: .accessibilityChanged, object: nil, queue: .main
-    ) { [weak self] _ in self?.mayHaveChanged() }
+    NSWorkspace.shared.notificationCenter.observeOnMain(NSWorkspace.activeSpaceDidChangeNotification) { [weak self] _ in
+      self?.mayHaveChanged()
+    }
+    for name in [NSApplication.didChangeScreenParametersNotification, .accessibilityChanged] {
+      NotificationCenter.default.observeOnMain(name) { [weak self] _ in self?.mayHaveChanged() }
+    }
   }
 
   func contains(_ screen: NSScreen) -> Bool {
@@ -71,7 +69,7 @@ final class FullscreenSpaces {
       let appEl = AXUIElementCreateApplication(app.processIdentifier)
       let windows = AX.value(appEl, kAXWindowsAttribute) as? [AXUIElement] ?? []
       for window in windows {
-        guard (AX.value(window, "AXFullScreen") as? NSNumber)?.boolValue == true,
+        guard AX.bool(window, "AXFullScreen"),
               let frame = AX.frame(window),
               visible.contains(where: { $0.pid == app.processIdentifier && sameFrame($0.frame, frame) })
         else { continue }

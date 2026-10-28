@@ -6,7 +6,7 @@ enum AppAppearance: String, CaseIterable {
   case system, light, dark
 
   /// Backed by ~/.config/dock-utils/config.yml via AppConfig.
-  static var current: AppAppearance {
+  @MainActor static var current: AppAppearance {
     get { AppConfig.shared.appearance }
     set {
       AppConfig.shared.appearance = newValue
@@ -15,7 +15,7 @@ enum AppAppearance: String, CaseIterable {
   }
 
   /// Resolve to dark or light right now (override wins, else system).
-  static var isDark: Bool {
+  @MainActor static var isDark: Bool {
     switch current {
     case .dark: return true
     case .light: return false
@@ -24,8 +24,15 @@ enum AppAppearance: String, CaseIterable {
     }
   }
 
+  /// The system's own light/dark setting, whatever DockUtils' override.
+  /// For what imitates the system (the Dock clones).
+  static var systemAppearance: NSAppearance? {
+    let dark = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+    return NSAppearance(named: dark ? .darkAqua : .aqua)
+  }
+
   /// Push the override into AppKit (nil = follow the system).
-  static func apply() {
+  @MainActor static func apply() {
     switch current {
     case .system: NSApp.appearance = nil
     case .light: NSApp.appearance = NSAppearance(named: .aqua)

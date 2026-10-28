@@ -3,7 +3,8 @@ import Cocoa
 /// Persistent mini-badges: keeps an always-on overlay in sync with the Dock
 /// while `badgesAlwaysVisible` is set — apps opening/closing renumber live.
 /// Hold-to-show takes over while Option is held; this stands down meanwhile.
-final class PersistentBadges: NSObject {
+@MainActor
+final class PersistentBadges {
   private let overlay: OverlayManager
   private weak var hotkey: HotkeyManager?
   private var lastKey: [String] = []
@@ -12,20 +13,15 @@ final class PersistentBadges: NSObject {
   init(overlay: OverlayManager, hotkey: HotkeyManager) {
     self.overlay = overlay
     self.hotkey = hotkey
-    super.init()
-    // Dock items, running state, order and settings arrive as .dockChanged
-    // (see DockWatcher); config edits as .appConfigChanged.
-    for name in [Notification.Name.dockChanged, .appConfigChanged] {
-      NotificationCenter.default.addObserver(self, selector: #selector(sync), name: name, object: nil)
-    }
+    let center = NotificationCenter.default
+    // Dock and settings changes arrive through DockModel, which also polls
+    // for the changes that send no event (e.g. the Dock moving displays).
+    center.observeOnMain(.dockSnapshotUpdated) { [weak self] _ in self?.sync() }
     // Dock clones moved or appeared: their badges need redrawing even
-    // though the real Dock didn't change.
-    NotificationCenter.default.addObserver(self, selector: #selector(clonesChanged), name: .dockClonesChanged, object: nil)
-    // A display entered or left a full-screen Space: badges hide there.
-    NotificationCenter.default.addObserver(self, selector: #selector(clonesChanged), name: .fullscreenDisplaysChanged, object: nil)
-    // The real Dock hopping to another display sends no event: slow poll.
-    Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-      self?.sync()
+    // though the real Dock didn't change. A display entering or leaving a
+    // full-screen Space: badges hide there.
+    for name in [Notification.Name.dockClonesChanged, .fullscreenDisplaysChanged] {
+      center.observeOnMain(name) { [weak self] _ in self?.redraw() }
     }
     // Light/dark switches (by the system, or in Settings): the glass is
     // drawn for one appearance.
@@ -43,12 +39,12 @@ final class PersistentBadges: NSObject {
     }
   }
 
-  @objc private func clonesChanged() {
+  private func redraw() {
     lastKey = []
     sync()
   }
 
-  @objc func sync() {
+  func sync() {
     guard AppConfig.shared.badgesAlwaysVisible, hotkey?.isOptionHeld == false else {
       // Hide minis only when the feature is off. While held with the feature
       // on they stay put: no hold overlay replaces them, so hiding would
@@ -58,7 +54,7 @@ final class PersistentBadges: NSObject {
       }
       return
     }
-    let apps = DockReader.runningAppItems()
+    let apps = DockModel.shared.snapshot?.runningApps ?? []
     let k = Self.key(apps)
     // Re-show when the overlay isn't showing persistent minis (e.g. a hold
     // overlay took over, or they were hidden) or the Dock changed.

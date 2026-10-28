@@ -8,8 +8,8 @@ import ServiceManagement
 final class SettingsWindowController: NSWindowController {
   private var loginSwitch: NSSwitch!
   private var loginErrorLabel: NSTextField!
-  private var accessLabel: NSTextField!
-  private var accessButton: NSButton!
+  /// One per tab, shown while Accessibility is missing.
+  private var permissionBanners: [NSView] = []
   private var menubarSwitch: NSSwitch!
   private var alwaysSwitch: NSSwitch!
   private var clonesSwitch: NSSwitch!
@@ -47,10 +47,10 @@ final class SettingsWindowController: NSWindowController {
 
   private func buildUI() {
     tabs.tabStyle = .toolbar
-    tabs.addTabViewItem(tab("General", symbol: "gearshape", page: generalPage()))
-    tabs.addTabViewItem(tab("Dock Shortcuts", symbol: "keyboard", page: shortcutsPage()))
-    tabs.addTabViewItem(tab("Dock Clones", symbol: "rectangle.on.rectangle", page: clonesPage()))
-    tabs.addTabViewItem(tab("About", symbol: "info.circle", page: aboutPage()))
+    tabs.addTabViewItem(tab("General", symbol: "gearshape", page: [permissionBanner()] + generalPage()))
+    tabs.addTabViewItem(tab("Dock Shortcuts", symbol: "keyboard", page: [permissionBanner()] + shortcutsPage()))
+    tabs.addTabViewItem(tab("Dock Clones", symbol: "rectangle.on.rectangle", page: [permissionBanner()] + clonesPage()))
+    tabs.addTabViewItem(tab("About", symbol: "info.circle", page: [permissionBanner()] + aboutPage()))
 
     refreshAll()
     NotificationCenter.default.addObserver(
@@ -72,13 +72,18 @@ final class SettingsWindowController: NSWindowController {
     menubarSwitch.target = self
     menubarSwitch.action = #selector(menubarToggled(_:))
     themePopup = NSPopUpButton()
+    // Item i is AppAppearance.allCases[i].
     themePopup.addItems(withTitles: AppAppearance.allCases.map(\.label))
     themePopup.target = self
     themePopup.action = #selector(appearanceChanged(_:))
+    let configButton = NSButton(title: "Open config.yml", target: self, action: #selector(openConfigFile(_:)))
+    configButton.bezelStyle = .rounded
+    configButton.toolTip = AppConfig.fileURL.path
     let general = section(title: "General", rows: [
       ("Start automatically when you log in", loginSwitch),
       ("Show menu bar icon", menubarSwitch),
       ("Appearance", themePopup),
+      ("Settings file", configButton),
     ])
 
     loginErrorLabel = NSTextField(wrappingLabelWithString: "")
@@ -87,17 +92,10 @@ final class SettingsWindowController: NSWindowController {
     loginErrorLabel.preferredMaxLayoutWidth = Self.width - 40
     loginErrorLabel.isHidden = true
 
-    accessLabel = NSTextField(wrappingLabelWithString: "")
-    accessLabel.font = .systemFont(ofSize: 13)
-    accessLabel.preferredMaxLayoutWidth = Self.width - 68
-    accessButton = NSButton(title: "Open System Settings…", target: self, action: #selector(openAccessibilitySettings(_:)))
-    accessButton.bezelStyle = .rounded
-    let access = section(title: "Accessibility", rows: [(nil, accessLabel), (nil, accessButton)])
-
     // Quit: the only way out when the menu bar icon is hidden.
     let quitButton = NSButton(title: "Quit DockUtils", target: NSApp, action: #selector(NSApplication.terminate(_:)))
     quitButton.bezelStyle = .rounded
-    return [general, loginErrorLabel, access, quitButton]
+    return [general, loginErrorLabel, quitButton]
   }
 
   private func shortcutsPage() -> [NSView] {
@@ -112,6 +110,10 @@ final class SettingsWindowController: NSWindowController {
     // Same row height as the switch/popup rows so the rhythm stays even.
     delayRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 26).isActive = true
     delaySlider = NSSlider(value: 100, minValue: 0, maxValue: 500, target: self, action: #selector(delayChanged(_:)))
+    // 25 ms steps; the label follows the knob while dragging.
+    delaySlider.numberOfTickMarks = 21
+    delaySlider.allowsTickMarkValuesOnly = true
+    delaySlider.isContinuous = true
     delaySlider.translatesAutoresizingMaskIntoConstraints = false
     delaySlider.widthAnchor.constraint(equalToConstant: 130).isActive = true
     delayRow.addArrangedSubview(delaySlider)
@@ -227,6 +229,41 @@ final class SettingsWindowController: NSWindowController {
     return item
   }
 
+  /// Shown at the top of every tab while Accessibility is missing: badges
+  /// and clones do nothing without it, and nothing else would say so.
+  private func permissionBanner() -> NSView {
+    let icon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Warning") ?? NSImage())
+    icon.contentTintColor = .systemOrange
+    icon.setContentHuggingPriority(.required, for: .horizontal)
+    let text = NSTextField(wrappingLabelWithString: "DockUtils needs Accessibility access. Until it's allowed, badges, shortcuts and Dock clones don't work.")
+    text.font = .systemFont(ofSize: 12)
+    text.preferredMaxLayoutWidth = Self.width - 40 - 28 - 30
+    let button = NSButton(title: "Open System Settings…", target: self, action: #selector(openAccessibilitySettings(_:)))
+    button.bezelStyle = .rounded
+    let column = NSStackView(views: [text, button])
+    column.orientation = .vertical
+    column.alignment = .leading
+    column.spacing = 8
+    let row = NSStackView(views: [icon, column])
+    row.orientation = .horizontal
+    row.alignment = .top
+    row.spacing = 10
+    row.translatesAutoresizingMaskIntoConstraints = false
+    let box = GroupBoxView(fill: NSColor.systemOrange.withAlphaComponent(0.15))
+    box.translatesAutoresizingMaskIntoConstraints = false
+    box.addSubview(row)
+    NSLayoutConstraint.activate([
+      row.topAnchor.constraint(equalTo: box.topAnchor, constant: 12),
+      row.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
+      row.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -14),
+      row.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -12),
+    ])
+    // Full width, like the sections (see tab()).
+    box.identifier = Self.sectionID
+    permissionBanners.append(box)
+    return box
+  }
+
   /// Secondary explanatory text at the top of a tab.
   private func hint(_ text: String) -> NSTextField {
     let field = NSTextField(wrappingLabelWithString: text)
@@ -240,7 +277,8 @@ final class SettingsWindowController: NSWindowController {
   private static let sectionID = NSUserInterfaceItemIdentifier("section")
 
   /// Caption + rounded group with label/control rows (nil label = full-width row).
-  private func section(title: String, rows: [(String?, NSView)]) -> NSView {    let wrap = NSStackView()
+  private func section(title: String, rows: [(String?, NSView)]) -> NSView {
+    let wrap = NSStackView()
     wrap.orientation = .vertical
     wrap.alignment = .leading
     wrap.spacing = 6
@@ -250,7 +288,7 @@ final class SettingsWindowController: NSWindowController {
     caption.textColor = .secondaryLabelColor
     wrap.addArrangedSubview(caption)
 
-    let boxView = GroupBoxView()
+    let boxView = GroupBoxView(fill: .controlBackgroundColor)
     boxView.translatesAutoresizingMaskIntoConstraints = false
     let inner = NSStackView()
     inner.orientation = .vertical
@@ -319,12 +357,12 @@ final class SettingsWindowController: NSWindowController {
     loginSwitch.isEnabled = DockUtils.isAppBundle
     loginSwitch.toolTip = DockUtils.isAppBundle ? nil : "Start-at-login is managed by the installed DockUtils.app, not dev builds."
     loginSwitch.state = LaunchAtLogin.isEnabled ? .on : .off
-    menubarSwitch.state = ShowMenuBarIcon.isEnabled ? .on : .off
+    menubarSwitch.state = AppConfig.shared.showMenuBarIcon ? .on : .off
     alwaysSwitch.state = AppConfig.shared.badgesAlwaysVisible ? .on : .off
     clonesSwitch.state = AppConfig.shared.dockClones ? .on : .off
     keepClearSwitch.state = AppConfig.shared.dockClonesKeepWindowsClear ? .on : .off
     updateClonesEnabled()
-    themePopup.selectItem(withTitle: AppAppearance.current.label)
+    themePopup.selectItem(at: AppAppearance.allCases.firstIndex(of: AppAppearance.current) ?? 0)
     delaySlider.doubleValue = Double(AppConfig.shared.badgeDelayMs)
     delayLabel.stringValue = "\(AppConfig.shared.badgeDelayMs) ms"
     updateDelayEnabled()
@@ -356,6 +394,7 @@ final class SettingsWindowController: NSWindowController {
       try LaunchAtLogin.setEnabled(sender.state == .on)
       AppConfig.shared.startAtLogin = sender.state == .on
       AppConfig.shared.save()
+      NotificationCenter.default.post(name: .appConfigChanged, object: nil)
       if sender.state == .on, LaunchAtLogin.needsApproval {
         sender.state = .off
         showLoginNeedsApproval()
@@ -370,17 +409,14 @@ final class SettingsWindowController: NSWindowController {
   }
 
   @objc private func menubarToggled(_ sender: NSSwitch) {
-    ShowMenuBarIcon.setEnabled(sender.state == .on)
-    DockUtils.updateStatusItem(settings: SettingsWindowController.shared)
+    AppConfig.shared.showMenuBarIcon = sender.state == .on
+    AppConfig.shared.save()
+    NotificationCenter.default.post(name: .appConfigChanged, object: nil)
   }
 
   @objc private func refreshAccessibility() {
     let granted = AXIsProcessTrusted()
-    accessLabel.stringValue = granted
-      ? "Accessibility access: granted ✓"
-      : "Accessibility access: required for badges and Dock clones"
-    // No need to offer System Settings when there's nothing to fix.
-    accessButton.superview?.isHidden = granted
+    for banner in permissionBanners { banner.isHidden = granted }
     tabs.fitWindow()
   }
 
@@ -388,14 +424,24 @@ final class SettingsWindowController: NSWindowController {
     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
   }
 
+  @objc private func openConfigFile(_: NSButton) {
+    let url = AppConfig.fileURL
+    // A fresh Mac has no app for .yml files: fall back to TextEdit.
+    if NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
+      NSWorkspace.shared.open(url)
+    } else if let textEdit = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit") {
+      NSWorkspace.shared.open([url], withApplicationAt: textEdit, configuration: NSWorkspace.OpenConfiguration())
+    }
+  }
+
   @objc private func openRepo(_: NSGestureRecognizer) {
     NSWorkspace.shared.open(URL(string: "https://github.com/kovacsgellert/dock-utils-mac")!)
   }
 
   @objc private func appearanceChanged(_ sender: NSPopUpButton) {
-    guard let selected = AppAppearance.allCases.first(where: { $0.label == sender.titleOfSelectedItem }) else { return }
-    AppAppearance.current = selected
-    AppAppearance.apply()
+    guard AppAppearance.allCases.indices.contains(sender.indexOfSelectedItem) else { return }
+    AppAppearance.current = AppAppearance.allCases[sender.indexOfSelectedItem]
+    NotificationCenter.default.post(name: .appConfigChanged, object: nil)
   }
 
   @objc private func alwaysToggled(_ sender: NSSwitch) {
@@ -431,10 +477,13 @@ final class SettingsWindowController: NSWindowController {
   }
 
   @objc private func delayChanged(_ sender: NSSlider) {
-    let ms = min(max(Int(sender.doubleValue.rounded()), 0), 500)
+    let ms = Int(sender.doubleValue.rounded()).clamped(0, 500)
+    delayLabel.stringValue = "\(ms) ms"
+    // Save once the knob is let go, not at every step of a drag.
+    guard NSApp.currentEvent?.type != .leftMouseDragged else { return }
     AppConfig.shared.badgeDelayMs = ms
     AppConfig.shared.save()
-    delayLabel.stringValue = "\(ms) ms"
+    NotificationCenter.default.post(name: .appConfigChanged, object: nil)
   }
 }
 
@@ -442,8 +491,11 @@ final class SettingsWindowController: NSWindowController {
 /// (Resolving a dynamic NSColor to CGColor once would freeze the
 /// creation-time appearance — this re-resolves on every change.)
 private final class GroupBoxView: NSView {
-  override init(frame frameRect: NSRect) {
-    super.init(frame: frameRect)
+  private let fill: NSColor
+
+  init(fill: NSColor) {
+    self.fill = fill
+    super.init(frame: .zero)
     wantsLayer = true
     layer?.cornerRadius = 10
     refresh()
@@ -458,7 +510,10 @@ private final class GroupBoxView: NSView {
   }
 
   private func refresh() {
-    layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    // cgColor resolves against the current drawing appearance.
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = fill.cgColor
+    }
   }
 }
 
@@ -466,7 +521,7 @@ private final class GroupBoxView: NSView {
 /// tab, so switching tabs never resizes it (shorter tabs top-aligned).
 final class SettingsTabViewController: NSTabViewController {
   /// Size the window for the tallest tab. Called again when a tab's content
-  /// changes height (e.g. a permission or error row appears); only grows.
+  /// changes height (e.g. the permission banner or an error row comes or goes).
   func fitWindow() {
     guard let window = view.window else { return }
     let pages = tabViewItems.compactMap { $0.viewController?.view }
@@ -476,7 +531,7 @@ final class SettingsTabViewController: NSTabViewController {
       height: pages.map(\.fittingSize.height).max() ?? 0
     )
     let current = window.contentRect(forFrameRect: window.frame).size
-    guard needed.height > current.height || needed.width != current.width else { return }
+    guard needed != current else { return }
     for item in tabViewItems { item.viewController?.preferredContentSize = needed }
     let frame = window.frameRect(forContentRect: CGRect(origin: .zero, size: needed))
     let old = window.frame

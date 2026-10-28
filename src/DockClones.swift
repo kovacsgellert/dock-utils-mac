@@ -8,6 +8,7 @@ extension Notification.Name {
   static let dockClonesChanged = Notification.Name("dock-utils.dockClonesChanged")
 }
 
+@MainActor
 final class DockClones {
   static let shared = DockClones()
 
@@ -25,18 +26,20 @@ final class DockClones {
 
   func start() {
     refresh(force: true)
-    NotificationCenter.default.addObserver(forName: .dockChanged, object: nil, queue: .main) { [weak self] _ in
-      self?.refresh()
+    // Dock and settings changes arrive through DockModel, which also polls
+    // for the changes that send no event.
+    for name in [Notification.Name.dockSnapshotUpdated, .fullscreenDisplaysChanged] {
+      NotificationCenter.default.observeOnMain(name) { [weak self] _ in self?.refresh() }
     }
-    NotificationCenter.default.addObserver(forName: .appConfigChanged, object: nil, queue: .main) { [weak self] _ in
-      self?.refresh(force: true)
+    // The clones look like the real Dock, which follows the system's
+    // light/dark setting rather than DockUtils' own Appearance setting.
+    DistributedNotificationCenter.default().observeOnMain(.init("AppleInterfaceThemeChangedNotification")) { [weak self] _ in
+      // The setting is written just after the announcement.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        guard let self else { return }
+        for panel in self.panels.values { panel.updateAppearance() }
+      }
     }
-    NotificationCenter.default.addObserver(forName: .fullscreenDisplaysChanged, object: nil, queue: .main) { [weak self] _ in
-      self?.refresh()
-    }
-    // Everything else arrives as .dockChanged (see DockWatcher), but badge
-    // changes and the real Dock hopping displays send no event at all.
-    Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in self?.refresh() }
   }
 
   func refresh(force: Bool = false) {
@@ -45,7 +48,7 @@ final class DockClones {
       if config.dockClones || force { config = freshConfig; removeAll() }
       return
     }
-    guard let fresh = DockReader.snapshot() else { return }
+    guard let fresh = DockModel.shared.snapshot else { return }
     let freshPrefs = DockPrefs.read()
     let freshScreens = NSScreen.screens.map(\.frame)
     let freshDockScreen = Self.screenID(containing: Coords.flip(fresh.frame))
@@ -73,10 +76,12 @@ final class DockClones {
       if let panel = panels[id] {
         panel.update(layout: layout, items: snapshot.items)
       } else {
-        let panel = DockClonePanel(screenID: id, layout: layout, items: snapshot.items) { [weak self] item in
+        let panel = DockClonePanel(layout: layout, items: snapshot.items) { [weak self] item in
           self?.click(item)
         }
         panel.onPointer = { [weak self] inside in self?.pointer(inside: inside, id: id) }
+        panel.menuFor = { [weak self] item in self?.menu(for: item) }
+        panel.onDrop = { [weak self] urls, item in self?.drop(urls, on: item) }
         panels[id] = panel
       }
       panels[id]?.setRevealed(!prefs.autohide, animated: false)
@@ -145,7 +150,58 @@ final class DockClones {
     case .separator:
       break
     }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.refresh() }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { DockModel.shared.refresh() }
+  }
+
+  /// The right-click menu: a short version of the Dock's.
+  private func menu(for item: DockItem) -> NSMenu? {
+    let menu = NSMenu()
+    func add(_ title: String, _ action: @escaping () -> Void) {
+      menu.addItem(ActionMenuItem(title, action))
+    }
+    switch item.kind {
+    case .app:
+      let app = item.url.flatMap { url in
+        NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == url.path }
+      }
+      if let app {
+        add(app.isHidden ? "Show" : "Hide") { _ = app.isHidden ? app.unhide() : app.hide() }
+      } else {
+        add("Open") { [weak self] in self?.click(item) }
+      }
+      if let url = item.url {
+        add("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+      }
+      // Finder can't be quit from the Dock either.
+      if let app, app.bundleIdentifier != "com.apple.finder" {
+        menu.addItem(.separator())
+        add("Quit") { app.terminate() }
+      }
+    case .folder:
+      add("Open") { [weak self] in self?.click(item) }
+      if let url = item.url {
+        add("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+      }
+    case .trash:
+      add("Open") { [weak self] in self?.click(item) }
+    case .separator:
+      return nil
+    }
+    return menu
+  }
+
+  /// Files dropped on an app open with it; on the Trash they move there,
+  /// as with the real Dock.
+  private func drop(_ urls: [URL], on item: DockItem) {
+    switch item.kind {
+    case .app:
+      guard let app = item.url else { return }
+      NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    case .trash:
+      NSWorkspace.shared.recycle(urls)
+    case .folder, .separator:
+      break
+    }
   }
 
   /// Auto-hide: reveal when the pointer reaches the clone (only its 1 pt

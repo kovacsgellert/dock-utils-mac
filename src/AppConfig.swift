@@ -1,9 +1,9 @@
 import Foundation
 
 /// Portable settings in ~/.config/dock-utils/config.yml (XDG-style).
-/// Hand- and script-editable; the app applies them at launch and reloads
-/// them when the settings window opens. No third-party YAML dependency:
-/// the format is flat `key: value` pairs, parsed below.
+/// Hand- and script-editable; the app applies them at launch and whenever
+/// the file changes. No third-party YAML dependency: the format is flat
+/// `key: value` pairs, parsed below.
 struct AppConfig: Equatable {
   var startAtLogin = false
   var showMenuBarIcon = true
@@ -17,35 +17,61 @@ struct AppConfig: Equatable {
   /// Shrink zoomed/tiled windows out of the clones' area.
   var dockClonesKeepWindowsClear = true
 
-  /// XDG_CONFIG_HOME when set (absolute, ~ expanded), else ~/.config.
+  /// Every setting as it appears in the file, in file order. Adding a
+  /// setting means adding a property above and a line here.
+  static let keys: [Key] = [
+    .bool("start_at_login", \.startAtLogin),
+    .bool("show_menu_bar_icon", \.showMenuBarIcon),
+    Key("appearance", comment: "system | light | dark",
+        read: { c, raw in AppAppearance(rawValue: raw.lowercased()).map { c.appearance = $0 } != nil },
+        write: { $0.appearance.rawValue }),
+    Key("badge_delay_ms", comment: "0...500",
+        read: { c, raw in Int(raw).map { c.badgeDelayMs = $0.clamped(0, 500) } != nil },
+        write: { "\($0.badgeDelayMs)" }),
+    .bool("badges_always_visible", \.badgesAlwaysVisible, comment: "persistent mini-badges on Dock icons"),
+    .bool("dock_clones", \.dockClones, comment: "clone the Dock onto your other displays"),
+    .bool("dock_clones_keep_windows_clear", \.dockClonesKeepWindowsClear, comment: "shrink zoomed/tiled windows out of the clones"),
+  ]
+
+  struct Key {
+    let name: String
+    let comment: String?
+    /// Applies a raw value; false when it isn't a valid one.
+    let read: (inout AppConfig, String) -> Bool
+    let write: (AppConfig) -> String
+
+    init(_ name: String, comment: String? = nil, read: @escaping (inout AppConfig, String) -> Bool, write: @escaping (AppConfig) -> String) {
+      self.name = name
+      self.comment = comment
+      self.read = read
+      self.write = write
+    }
+
+    static func bool(_ name: String, _ path: WritableKeyPath<AppConfig, Bool>, comment: String? = nil) -> Key {
+      Key(name, comment: comment,
+          read: { c, raw in parseBool(raw).map { c[keyPath: path] = $0 } != nil },
+          write: { "\($0[keyPath: path])" })
+    }
+  }
+
+  /// $XDG_CONFIG_HOME when set (absolute, ~ expanded), else ~/.config.
   /// macOS has no XDG convention natively, but this keeps dotfile-managed
   /// setups and scripts portable across machines.
-  static let dirURL: URL = {
-    if var xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"],
+  private static let configHome: URL = {
+    if let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"],
        !xdg.trimmingCharacters(in: .whitespaces).isEmpty {
-      xdg = (xdg as NSString).expandingTildeInPath
-      return URL(fileURLWithPath: xdg, isDirectory: true)
-        .appendingPathComponent("dock-utils", isDirectory: true)
+      return URL(fileURLWithPath: (xdg as NSString).expandingTildeInPath, isDirectory: true)
     }
-    return FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/dock-utils", isDirectory: true)
+    return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config", isDirectory: true)
   }()
 
-  static let fileURL: URL = dirURL.appendingPathComponent("config.yml")
+  static let fileURL: URL = configHome.appendingPathComponent("dock-utils/config.yml")
 
   /// Previous location (before the rename from DockShortcuts). Migrated once if the new file is missing.
-  private static let legacyFileURL: URL = {
-    if let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"],
-       !(xdg.trimmingCharacters(in: .whitespaces).isEmpty) {
-      return URL(fileURLWithPath: (xdg as NSString).expandingTildeInPath, isDirectory: true)
-        .appendingPathComponent("dock-shortcuts/config.yml")
-    }
-    return FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/dock-shortcuts/config.yml")
-  }()
+  private static let legacyFileURL: URL = configHome.appendingPathComponent("dock-shortcuts/config.yml")
 
   /// Live copy used across the app. Mutate then save(), or reload() from disk.
-  static var shared = load()
+  @MainActor static var shared = load()
 
   mutating func reload() {
     self = Self.load()
@@ -76,34 +102,7 @@ struct AppConfig: Equatable {
       fresh.save()
       return fresh
     }
-    var config = AppConfig()
-    let dict = parse(text)
-    var missingKeys = false
-    func take(_ key: String) -> String? {
-      guard let v = dict[key] else { missingKeys = true; return nil }
-      return v
-    }
-    if let raw = take("start_at_login"), let b = parseBool(raw) {
-      config.startAtLogin = b
-    }
-    if let raw = take("show_menu_bar_icon"), let b = parseBool(raw) {
-      config.showMenuBarIcon = b
-    }
-    if let raw = take("appearance"), let a = AppAppearance(rawValue: raw.lowercased()) {
-      config.appearance = a
-    }
-    if let raw = take("badge_delay_ms"), let ms = Int(raw) {
-      config.badgeDelayMs = min(max(ms, 0), 500)
-    }
-    if let raw = take("badges_always_visible"), let b = parseBool(raw) {
-      config.badgesAlwaysVisible = b
-    }
-    if let raw = take("dock_clones"), let b = parseBool(raw) {
-      config.dockClones = b
-    }
-    if let raw = take("dock_clones_keep_windows_clear"), let b = parseBool(raw) {
-      config.dockClonesKeepWindowsClear = b
-    }
+    let (config, missingKeys) = decode(text)
     // Older files predate newer keys: backfill once so the file always
     // documents every setting (and hand-editing discovery works).
     if missingKeys {
@@ -112,45 +111,83 @@ struct AppConfig: Equatable {
     return config
   }
 
-  func save() {
-    let text = """
-      # dock-utils settings — portable, safe to edit by hand or scripts.
-      # Regenerated only when missing; your edits are preserved.
-      start_at_login: \(startAtLogin)
-      show_menu_bar_icon: \(showMenuBarIcon)
-      appearance: \(appearance.rawValue)  # system | light | dark
-      badge_delay_ms: \(badgeDelayMs)  # 0...500
-      badges_always_visible: \(badgesAlwaysVisible)
-      dock_clones: \(dockClones)  # clone the Dock onto your other displays
-      dock_clones_keep_windows_clear: \(dockClonesKeepWindowsClear)
+  /// Settings from a file's text; `missingKeys` when some aren't in it.
+  /// Invalid values keep their defaults (and are logged).
+  static func decode(_ text: String) -> (config: AppConfig, missingKeys: Bool) {
+    var config = AppConfig()
+    var missingKeys = false
+    let dict = Dictionary(lines(text).compactMap(\.entry).map { ($0.key, $0.value) }) { first, _ in first }
+    for key in keys {
+      guard let raw = dict[key.name] else { missingKeys = true; continue }
+      if !key.read(&config, raw) {
+        NSLog("DockUtils: ignoring invalid \(key.name) in \(fileURL.path): \(raw)")
+      }
+    }
+    return (config, missingKeys)
+  }
 
-      """
+  func save() {
+    let existing = try? String(contentsOf: Self.fileURL, encoding: .utf8)
     do {
       try FileManager.default.createDirectory(
         at: Self.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
       )
-      try text.write(to: Self.fileURL, atomically: true, encoding: .utf8)
+      try encode(updating: existing).write(to: Self.fileURL, atomically: true, encoding: .utf8)
     } catch {
       NSLog("DockUtils: couldn't save config: \(error)")
     }
   }
 
+  /// The file's text with these settings. An existing file keeps its
+  /// comments, blank lines and order: only values change, and missing
+  /// settings are added at the end.
+  func encode(updating existing: String?) -> String {
+    let header = """
+      # dock-utils settings — portable, safe to edit by hand or scripts.
+      # Changes from the settings window update values in place; comments are kept.
+
+      """
+    var out: [String] = []
+    var written: Set<String> = []
+    for line in Self.lines(existing ?? header) {
+      guard let entry = line.entry, !written.contains(entry.key),
+            let key = Self.keys.first(where: { $0.name == entry.key })
+      else { out.append(line.text); continue }
+      written.insert(key.name)
+      out.append(String(line.text[..<entry.valueStart]) + key.write(self) + String(line.text[entry.valueEnd...]))
+    }
+    while out.last?.isEmpty == true { out.removeLast() }
+    for key in Self.keys where !written.contains(key.name) {
+      out.append("\(key.name): \(key.write(self))" + (key.comment.map { "  # \($0)" } ?? ""))
+    }
+    return out.joined(separator: "\n") + "\n"
+  }
+
   // MARK: - Minimal flat-YAML parsing
 
-  private static func parse(_ text: String) -> [String: String] {
-    var out: [String: String] = [:]
-    for line in text.components(separatedBy: .newlines) {
-      let t = line.trimmingCharacters(in: .whitespaces)
-      guard !t.isEmpty, !t.hasPrefix("#") else { continue }
-      let parts = t.split(separator: ":", maxSplits: 1).map(String.init)
-      guard parts.count == 2 else { continue }
-      var value = parts[1].trimmingCharacters(in: .whitespaces)
-      if let range = value.range(of: " #") {
-        value = String(value[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+  /// One line of the file and, for a `key: value` line, where its value is.
+  private struct Line {
+    let text: String
+    let entry: (key: String, value: String, valueStart: String.Index, valueEnd: String.Index)?
+  }
+
+  private static func lines(_ text: String) -> [Line] {
+    text.components(separatedBy: .newlines).map { text in
+      let t = text.trimmingCharacters(in: .whitespaces)
+      guard !t.isEmpty, !t.hasPrefix("#"), let colon = text.firstIndex(of: ":") else {
+        return Line(text: text, entry: nil)
       }
-      out[parts[0].trimmingCharacters(in: .whitespaces).lowercased()] = value
+      let key = text[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+      // The value runs from after the colon's spaces to a " #" comment
+      // (and the spaces before it) or the end of the line.
+      let afterColon = text[text.index(after: colon)...]
+      let start = afterColon.firstIndex { $0 != " " && $0 != "\t" } ?? afterColon.endIndex
+      var end = afterColon[start...].range(of: " #")?.lowerBound ?? afterColon.endIndex
+      while end > start, text[text.index(before: end)] == " " || text[text.index(before: end)] == "\t" {
+        end = text.index(before: end)
+      }
+      return Line(text: text, entry: (key, String(text[start..<end]), start, end))
     }
-    return out
   }
 
   private static func parseBool(_ raw: String) -> Bool? {

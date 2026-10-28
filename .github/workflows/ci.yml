@@ -1,0 +1,21 @@
+name: CI
+
+# Build and test every push to main and every pull request. Releases are
+# built separately, from version tags (see release.yml).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # macOS 26 SDK or newer: the Dock clones use NSGlassEffectView.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test

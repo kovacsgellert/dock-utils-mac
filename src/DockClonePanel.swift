@@ -1,8 +1,8 @@
 import Cocoa
 
 /// One Dock clone: a borderless panel at the Dock's window level on one screen.
+@MainActor
 final class DockClonePanel {
-  let screenID: CGDirectDisplayID
   private(set) var layout: DockCloneLayout
   private(set) var isRevealed = true
   private let panel: NSPanel
@@ -10,9 +10,12 @@ final class DockClonePanel {
   private let onClick: (DockItem) -> Void
   /// Pointer entered (true) or left (false) the clone.
   var onPointer: ((Bool) -> Void)?
+  /// The right-click menu for an item.
+  var menuFor: ((DockItem) -> NSMenu?)?
+  /// Files dropped on an app or the Trash.
+  var onDrop: (([URL], DockItem) -> Void)?
 
-  init(screenID: CGDirectDisplayID, layout: DockCloneLayout, items: [DockItem], onClick: @escaping (DockItem) -> Void) {
-    self.screenID = screenID
+  init(layout: DockCloneLayout, items: [DockItem], onClick: @escaping (DockItem) -> Void) {
     self.layout = layout
     self.onClick = onClick
     panel = NSPanel(
@@ -31,6 +34,7 @@ final class DockClonePanel {
     panel.becomesKeyOnlyIfNeeded = true
     // Every Space, but not full-screen Spaces (the real Dock hides there too).
     panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+    updateAppearance()
     update(layout: layout, items: items)
     panel.orderFrontRegardless()
   }
@@ -46,6 +50,13 @@ final class DockClonePanel {
       view.onHover = { [weak self, weak view] inside in
         guard let self, let view else { return }
         inside ? self.bubble.show(item.title, over: self.screenRect(of: view), edge: layout.edge) : self.bubble.hide()
+      }
+      view.menuProvider = { [weak self] in
+        self?.bubble.hide()
+        return self?.menuFor?(item)
+      }
+      if item.kind == .app || item.kind == .trash {
+        view.onDrop = { [weak self] urls in self?.onDrop?(urls, item) }
       }
       root.addSubview(view)
     }
@@ -68,8 +79,10 @@ final class DockClonePanel {
     }
   }
 
-  /// Where the panel is right now (moves while auto-hidden).
-  var currentFrame: CGRect { panel.frame }
+  /// Match the system's light/dark setting, like the real Dock.
+  func updateAppearance() {
+    panel.appearance = AppAppearance.systemAppearance
+  }
 
   func close() {
     bubble.hide()
@@ -127,6 +140,11 @@ private final class PointerView: NSView {
 private final class DockItemView: NSView {
   var onClick: (() -> Void)?
   var onHover: ((Bool) -> Void)?
+  var menuProvider: (() -> NSMenu?)?
+  /// Accepts dropped files when set.
+  var onDrop: (([URL]) -> Void)? {
+    didSet { onDrop == nil ? unregisterDraggedTypes() : registerForDraggedTypes([.fileURL]) }
+  }
   private let item: DockItem
   private let edge: DockEdge
   private let tile: CGFloat
@@ -192,6 +210,46 @@ private final class DockItemView: NSView {
 
   override func mouseEntered(with _: NSEvent) { onHover?(true) }
   override func mouseExited(with _: NSEvent) { onHover?(false) }
+
+  override func menu(for _: NSEvent) -> NSMenu? { menuProvider?() }
+
+  // MARK: Dropping files
+
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    guard onDrop != nil, !Self.fileURLs(sender).isEmpty else { return [] }
+    pressed = true
+    return item.kind == .trash ? .move : .copy
+  }
+
+  override func draggingExited(_: NSDraggingInfo?) { pressed = false }
+
+  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    pressed = false
+    let urls = Self.fileURLs(sender)
+    guard let onDrop, !urls.isEmpty else { return false }
+    onDrop(urls)
+    return true
+  }
+
+  private static func fileURLs(_ info: NSDraggingInfo) -> [URL] {
+    info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+  }
+}
+
+/// A menu item that runs a closure.
+final class ActionMenuItem: NSMenuItem {
+  private let handler: () -> Void
+
+  init(_ title: String, _ handler: @escaping () -> Void) {
+    self.handler = handler
+    super.init(title: title, action: #selector(run), keyEquivalent: "")
+    target = self
+  }
+
+  @available(*, unavailable)
+  required init(coder _: NSCoder) { fatalError() }
+
+  @objc private func run() { handler() }
 }
 
 private final class SeparatorView: NSView {
@@ -218,6 +276,7 @@ private final class SeparatorView: NSView {
 }
 
 /// The app-name label the Dock shows while hovering an icon.
+@MainActor
 private final class TitleBubble {
   private var panel: NSPanel?
 
@@ -242,6 +301,7 @@ private final class TitleBubble {
     p.backgroundColor = .clear
     p.ignoresMouseEvents = true
     p.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+    p.appearance = AppAppearance.systemAppearance
     let bg = NSVisualEffectView(frame: CGRect(origin: .zero, size: box))
     bg.material = .toolTip
     bg.state = .active
@@ -261,6 +321,7 @@ private final class TitleBubble {
   }
 }
 
+@MainActor
 enum IconCache {
   private static var cache: [String: NSImage] = [:]
 

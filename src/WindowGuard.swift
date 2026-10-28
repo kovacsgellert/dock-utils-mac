@@ -14,6 +14,7 @@ import ApplicationServices
 /// (to a same-sized tile, or to another display), so moves count too, except
 /// mouse drags: windows can still be dragged over a clone, just as over the
 /// real Dock.
+@MainActor
 final class WindowGuard {
   /// Reserved bands in Cocoa coordinates.
   private var reserved: [(edge: DockEdge, rect: CGRect)] = []
@@ -24,16 +25,16 @@ final class WindowGuard {
   private var pendingWindows: [pid_t: [(window: AXUIElement, clamp: Bool)]] = [:]
   /// How far from the screen edge a window edge still counts as "at the edge":
   /// Sequoia's "Tiled windows have margins" leaves a gap of about 8 pt.
-  private let edgeTolerance: CGFloat = 16
+  static let edgeTolerance: CGFloat = 16
 
   init() {
     let ws = NSWorkspace.shared.notificationCenter
-    ws.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] note in
+    ws.observeOnMain(NSWorkspace.didLaunchApplicationNotification) { [weak self] note in
       guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
       // Fresh processes reject AX observers until they finish launching.
       DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.watch(app) }
     }
-    ws.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+    ws.observeOnMain(NSWorkspace.didTerminateApplicationNotification) { [weak self] note in
       guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
       self?.unwatch(app.processIdentifier)
     }
@@ -60,8 +61,11 @@ final class WindowGuard {
     var observer: AXObserver?
     let callback: AXObserverCallback = { _, element, notification, refcon in
       guard let refcon else { return }
-      Unmanaged<WindowGuard>.fromOpaque(refcon).takeUnretainedValue()
-        .windowChanged(element, moved: notification as String == kAXWindowMovedNotification)
+      // Delivered on the main run loop (see below).
+      MainActor.assumeIsolated {
+        Unmanaged<WindowGuard>.fromOpaque(refcon).takeUnretainedValue()
+          .windowChanged(element, moved: notification as String == kAXWindowMovedNotification)
+      }
     }
     guard AXObserverCreate(pid, callback, &observer) == .success, let observer else { return }
     let appEl = AXUIElementCreateApplication(pid)
@@ -105,14 +109,13 @@ final class WindowGuard {
   }
 
   private func clampAllWindows(pid: pid_t) {
-    let windows = AX.value(AXUIElementCreateApplication(pid), kAXWindowsAttribute) as? [AXUIElement] ?? []
-    for w in windows { clamp(w) }
+    for w in AX.windows(pid: pid) { clamp(w) }
   }
 
   private func clamp(_ window: AXUIElement) {
     guard AX.value(window, kAXSubroleAttribute) as? String == kAXStandardWindowSubrole,
-          (AX.value(window, "AXFullScreen") as? NSNumber)?.boolValue != true,
-          (AX.value(window, kAXMinimizedAttribute) as? NSNumber)?.boolValue != true,
+          !AX.bool(window, "AXFullScreen"),
+          !AX.bool(window, kAXMinimizedAttribute),
           let frame = AX.frame(window) else { return }
     // Work in AX coordinates (top-left origin), like the window frame.
     let screens = NSScreen.screens.map { Coords.flip($0.frame) }
@@ -121,29 +124,38 @@ final class WindowGuard {
 
     for band in reserved {
       let strip = Coords.flip(band.rect)
-      guard screen.contains(CGPoint(x: strip.midX, y: strip.midY)), frame.intersects(strip) else { continue }
-      var target = frame
-      switch band.edge {
-      case .bottom:
-        let gap = screen.maxY - frame.maxY
-        guard gap > -2, gap <= edgeTolerance else { continue }
-        target.size.height = strip.minY - max(gap, 0) - frame.minY
-      case .left:
-        let gap = frame.minX - screen.minX
-        guard gap > -2, gap <= edgeTolerance else { continue }
-        target.origin.x = strip.maxX + max(gap, 0)
-        target.size.width = frame.maxX - target.minX
-      case .right:
-        let gap = screen.maxX - frame.maxX
-        guard gap > -2, gap <= edgeTolerance else { continue }
-        target.size.width = strip.minX - max(gap, 0) - frame.minX
-      }
-      // A window mostly under the clone is being parked there on purpose.
-      guard target.width >= 120, target.height >= 80, target != frame else { continue }
+      guard screen.contains(CGPoint(x: strip.midX, y: strip.midY)),
+            let target = Self.clamped(frame, screen: screen, edge: band.edge, strip: strip)
+      else { continue }
       if target.origin != frame.origin { AX.setPosition(window, target.origin) }
       AX.setSize(window, target.size)
       return
     }
+  }
+
+  /// Where a window goes to clear a clone's band on its screen, or nil to
+  /// leave it be. All in AX coordinates (top-left origin).
+  static func clamped(_ frame: CGRect, screen: CGRect, edge: DockEdge, strip: CGRect) -> CGRect? {
+    guard frame.intersects(strip) else { return nil }
+    var target = frame
+    switch edge {
+    case .bottom:
+      let gap = screen.maxY - frame.maxY
+      guard gap > -2, gap <= edgeTolerance else { return nil }
+      target.size.height = strip.minY - max(gap, 0) - frame.minY
+    case .left:
+      let gap = frame.minX - screen.minX
+      guard gap > -2, gap <= edgeTolerance else { return nil }
+      target.origin.x = strip.maxX + max(gap, 0)
+      target.size.width = frame.maxX - target.minX
+    case .right:
+      let gap = screen.maxX - frame.maxX
+      guard gap > -2, gap <= edgeTolerance else { return nil }
+      target.size.width = strip.minX - max(gap, 0) - frame.minX
+    }
+    // A window mostly under the clone is being parked there on purpose.
+    guard target.width >= 120, target.height >= 80, target != frame else { return nil }
+    return target
   }
 
   /// The last move notifications of a drag can arrive just after the button

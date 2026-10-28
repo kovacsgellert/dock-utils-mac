@@ -3,7 +3,8 @@ import ApplicationServices
 
 /// Global Option-hold detection + number-key interception via CGEventTap.
 /// "Held" means Option alone; adding Cmd/Ctrl/Shift counts as a release.
-/// Requires Accessibility permission (already granted for the spike).
+/// Requires Accessibility permission. The tap runs on the main run loop.
+@MainActor
 final class HotkeyManager {
   var onOptionDown: (() -> Void)?
   var onOptionUp: (() -> Void)?
@@ -47,17 +48,9 @@ final class HotkeyManager {
     ) else { return false }
     tap = t
     src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, t, 0)
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
+    CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
     CGEvent.tapEnable(tap: t, enable: true)
     return true
-  }
-
-  func stop() {
-    if let t = tap { CGEvent.tapEnable(tap: t, enable: false) }
-    if let s = src { CFRunLoopRemoveSource(CFRunLoopGetCurrent(), s, .commonModes) }
-    src = nil
-    tap = nil
-    optionHeld = false
   }
 
   fileprivate func handle(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -99,6 +92,9 @@ private func tapCallback(
   refcon: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
   guard let refcon else { return Unmanaged.passUnretained(event) }
-  let mgr = Unmanaged<HotkeyManager>.fromOpaque(refcon).takeUnretainedValue()
-  return mgr.handle(proxy: proxy, type: type, event: event)
+  // The tap's run loop source is on the main run loop (see start()).
+  return MainActor.assumeIsolated {
+    Unmanaged<HotkeyManager>.fromOpaque(refcon).takeUnretainedValue()
+      .handle(proxy: proxy, type: type, event: event)
+  }
 }

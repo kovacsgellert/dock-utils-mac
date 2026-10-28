@@ -5,11 +5,11 @@ import Foundation
 /// replace files rather than writing them in place.
 final class FileWatcher {
   private let url: URL
-  private let onChange: () -> Void
+  private let onChange: @MainActor () -> Void
   private var source: DispatchSourceFileSystemObject?
   private var modified: Date?
 
-  init(_ url: URL, onChange: @escaping () -> Void) {
+  init(_ url: URL, onChange: @escaping @MainActor () -> Void) {
     self.url = url
     self.onChange = onChange
     let dir = open(url.deletingLastPathComponent().path, O_EVTONLY)
@@ -21,7 +21,7 @@ final class FileWatcher {
       let date = self.modificationDate()
       guard date != self.modified else { return }
       self.modified = date
-      self.onChange()
+      MainActor.assumeIsolated { self.onChange() }
     }
     source.setCancelHandler { close(dir) }
     source.resume()

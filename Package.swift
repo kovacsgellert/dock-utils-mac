@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
@@ -11,6 +11,13 @@ let package = Package(
     .executableTarget(
       name: "dock-utils",
       path: "src"
-    )
-  ]
+    ),
+    // Swift Testing (ships with the Command Line Tools; no Xcode needed).
+    .testTarget(
+      name: "DockUtilsTests",
+      dependencies: ["dock-utils"],
+      path: "Tests/DockUtilsTests"
+    ),
+  ],
+  swiftLanguageModes: [.v5]
 )
