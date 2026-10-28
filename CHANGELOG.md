@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.3
+
+### Fixed
+
+- Shortcut badges and Dock clones no longer show over a full-screen app
+  (e.g. a full-screen video). They join every Space, so they stayed on top
+  of full-screen Spaces too, where the real Dock hides. Now each display
+  showing a full-screen app gets neither badges nor a clone, and both come
+  back when it leaves full screen
+
 ## 2.0.2
 
 ### Fixed
