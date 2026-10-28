@@ -104,6 +104,7 @@ struct DockUtils {
       persistent.sync()
       // Clones appear once Accessibility is granted (until then reads fail).
       DockWatcher.shared.start()
+      FullscreenSpaces.shared.start()
       DockClones.shared.start()
       app.run()
       return
@@ -113,6 +114,7 @@ struct DockUtils {
     print("DockUtils daemon running. Hold Option to show numbers, press 1-9/0 to switch. Ctrl+C to quit.")
     persistent.sync()
     DockWatcher.shared.start()
+    FullscreenSpaces.shared.start()
     DockClones.shared.start()
     app.run()
   }

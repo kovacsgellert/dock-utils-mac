@@ -117,6 +117,12 @@ final class OverlayManager {
         targets.append((app, clone.frame, DockSide(clone.edge), clone.edge == .right ? clone.dock.minX : clone.dock.maxX))
       }
     }
+    // Not over a full-screen app: the real Dock hides there, and the clone
+    // on such a display is gone.
+    let fullscreen = NSScreen.screens.filter(FullscreenSpaces.shared.contains)
+    targets.removeAll { target in
+      fullscreen.contains { $0.frame.contains(CGPoint(x: target.icon.midX, y: target.icon.midY)) }
+    }
 
     for (app, icon, side, dockInnerX) in targets {
       let base = self.badgeOrigin(for: icon, side: side, dockInnerX: dockInnerX, diameter: diameter, style: style)

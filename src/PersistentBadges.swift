@@ -21,6 +21,8 @@ final class PersistentBadges: NSObject {
     // Dock clones moved or appeared: their badges need redrawing even
     // though the real Dock didn't change.
     NotificationCenter.default.addObserver(self, selector: #selector(clonesChanged), name: .dockClonesChanged, object: nil)
+    // A display entered or left a full-screen Space: badges hide there.
+    NotificationCenter.default.addObserver(self, selector: #selector(clonesChanged), name: .fullscreenDisplaysChanged, object: nil)
     // The real Dock hopping to another display sends no event: slow poll.
     Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
       self?.sync()

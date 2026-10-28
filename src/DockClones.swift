@@ -17,6 +17,8 @@ final class DockClones {
   private var config = AppConfig.shared
   private var screensKey: [CGRect] = []
   private var dockScreenID: CGDirectDisplayID?
+  /// Displays showing a full-screen app, as of the last rebuild.
+  private var fullscreenKey: Set<CGDirectDisplayID> = []
   private let guardian = WindowGuard()
   private var pendingHide: [CGDirectDisplayID: DispatchWorkItem] = [:]
   private var lastIconsKey: [String] = []
@@ -28,6 +30,9 @@ final class DockClones {
     }
     NotificationCenter.default.addObserver(forName: .appConfigChanged, object: nil, queue: .main) { [weak self] _ in
       self?.refresh(force: true)
+    }
+    NotificationCenter.default.addObserver(forName: .fullscreenDisplaysChanged, object: nil, queue: .main) { [weak self] _ in
+      self?.refresh()
     }
     // Everything else arrives as .dockChanged (see DockWatcher), but badge
     // changes and the real Dock hopping displays send no event at all.
@@ -44,21 +49,25 @@ final class DockClones {
     let freshPrefs = DockPrefs.read()
     let freshScreens = NSScreen.screens.map(\.frame)
     let freshDockScreen = Self.screenID(containing: Coords.flip(fresh.frame))
+    let freshFullscreen = FullscreenSpaces.shared.displays
     let changed = force || fresh != snapshot || freshPrefs != prefs || freshConfig != config
-      || freshScreens != screensKey || freshDockScreen != dockScreenID
+      || freshScreens != screensKey || freshDockScreen != dockScreenID || freshFullscreen != fullscreenKey
     snapshot = fresh
     guard changed else { return }
     prefs = freshPrefs
     config = freshConfig
     screensKey = freshScreens
     dockScreenID = freshDockScreen
+    fullscreenKey = freshFullscreen
     rebuild()
   }
 
   private func rebuild() {
     var keep: Set<CGDirectDisplayID> = []
     for screen in NSScreen.screens {
-      guard let id = screen.displayID, id != dockScreenID else { continue }
+      // The real Dock hides under a full-screen app; so does the clone, and
+      // it comes back once its display no longer shows a full-screen app.
+      guard let id = screen.displayID, id != dockScreenID, !fullscreenKey.contains(id) else { continue }
       keep.insert(id)
       let layout = DockCloneLayout(items: snapshot.items, prefs: prefs, screen: screen.frame)
       if let panel = panels[id] {
