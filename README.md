@@ -25,19 +25,21 @@ Optional, off by default: **Settings → Dock Clones → Show Dock clones on oth
 
 - Same items in the same order (apps, separator, folders, Trash), with running indicators, badges (unread counts) and hover labels. Matches the Dock's position (bottom/left/right), icon size and auto-hide.
 - Clicking an app presses the real Dock item, so it launches, activates or un-minimizes exactly like a Dock click. Folders and Trash open in Finder.
+- Right-click (or Control-click) an item for Hide/Show, Show in Finder and Quit. Drop files on an app to open them with it, or on the Trash to move them there.
+- Light or dark like the real Dock: the clones follow the system appearance, not DockUtils' own Appearance setting.
 - Follows Dock changes, display connect/disconnect and rearrangement, and the real Dock moving between displays.
 - The number badges (hold Option, or always visible) show on the clones too, so Option+number works from whichever display you're looking at.
 - **Keep windows clear of the clones** (on by default): zoomed, filled and tiled windows stop at a clone's edge, as they do at the real Dock.
 
 How windows are kept clear: the real Dock reserves space by shrinking `NSScreen.visibleFrame`, and there's no public API to reserve more. SkyLight's private `SLSSetDockRectWithReason` does shrink another display's `visibleFrame`, but it's a single global rect shared with the real Dock, so it can't serve more than one clone. Instead, DockUtils watches other apps' windows through Accessibility (`kAXWindowResizedNotification`, `kAXWindowMovedNotification`) and, once a resize or move settles, shrinks a window whose edge is at (or within a 16 pt tiling margin of) the screen edge under a clone. Window managers often only move a window into a same-sized tile, so moves count too, but mouse drags don't, so you can still drag windows over a clone. The catch: the window first animates under the clone, then snaps back about 0.15 s later.
 
-Limitations: minimized windows aren't mirrored, folders don't pop up as stacks, and there's no magnification, bounce, progress bars, drag and drop or right-click menus.
+Limitations: minimized windows aren't mirrored, folders don't pop up as stacks (or accept drops), and there's no magnification, bounce, progress bars or rearranging by dragging.
 
 Under the hood: Dock icon positions come from the Accessibility API (`AXDockItem` elements of the Dock process), key interception via `CGEventTap`, badges are borderless `NSPanel`s with `NSVisualEffectView`.
 
 ## Requirements
 
-- macOS 14+
+- macOS 14+, Apple Silicon or Intel
 - Swift toolchain (`xcode-select --install` is enough; full Xcode not required)
 - **Accessibility permission**: the app needs it to read Dock icon positions and listen for the Option key, and for Dock clones to press Dock items and resize other apps' windows. Grant it in `System Settings → Privacy & Security → Accessibility` for your terminal (or the built binary) on first run.
 
@@ -45,6 +47,7 @@ Under the hood: Dock icon positions come from the Accessibility API (`AXDockItem
 
 ```sh
 swift build
+./scripts/test.sh   # swift test, plus the paths Swift Testing needs without Xcode
 ```
 
 ## Install a released version
@@ -58,7 +61,7 @@ brew install --cask dock-utils
 
 Or manually:
 
-1. Download `dock-utils-<version>-macos-arm64.dmg` from the [Releases page](https://github.com/kovacsgellert/dock-utils-mac/releases), open it, and drag **DockUtils** into **Applications**. (Prefer a guided install? Use `dock-utils-<version>-macos-arm64.pkg` instead — it puts the app into `/Applications` automatically.)
+1. Download `dock-utils-<version>-macos-universal.dmg` from the [Releases page](https://github.com/kovacsgellert/dock-utils-mac/releases), open it, and drag **DockUtils** into **Applications**. (Prefer a guided install? Use `dock-utils-<version>-macos-universal.pkg` instead — it puts the app into `/Applications` automatically.)
 2. Neither is notarized, so Gatekeeper blocks the first launch. On macOS 15 (Sequoia) and later, try to open the app once, then go to `System Settings → Privacy & Security`, scroll down and click **Open Anyway**. On macOS 14, right-click the app and choose **Open** instead.
 3. Grant Accessibility permission when prompted (`System Settings → Privacy & Security → Accessibility`).
 4. A settings window opens on first launch: toggle **Start automatically when you log in** if you want it always running. The window can be reopened anytime from the menu-bar icon.
@@ -89,7 +92,7 @@ dock_clones: false  # clone the Dock onto your other displays
 dock_clones_keep_windows_clear: true  # shrink zoomed/tiled windows out of the clones
 ```
 
-The file is created on first launch (existing installs migrate their current settings into it). Hand edits apply as soon as the file is saved, no relaunch needed. Everything is also editable from the settings window.
+The file is created on first launch (existing installs migrate their current settings into it). Hand edits apply as soon as the file is saved, no relaunch needed. Everything is also editable from the settings window (**General → Open config.yml** opens the file); changes made there update values in place and keep your comments.
 
 
 ## Usage

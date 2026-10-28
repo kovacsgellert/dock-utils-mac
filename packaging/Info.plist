@@ -19,7 +19,7 @@
   <key>CFBundleShortVersionString</key>
   <string>__VERSION__</string>
   <key>CFBundleVersion</key>
-  <string>__VERSION__</string>
+  <string>__BUILD__</string>
   <key>CFBundleIconFile</key>
   <string>dock-utils</string>
   <key>LSMinimumSystemVersion</key>
