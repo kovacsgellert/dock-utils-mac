@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.1.0
+
+### New
+
+- Runs on Intel Macs too: releases are a universal app. The downloads
+  are now named `dock-utils-<version>-macos-universal.dmg` / `.pkg`
+- Dock clones: right-click (or Control-click) an item for Hide/Show,
+  Show in Finder and Quit; drop files on an app to open them with it, or
+  on the Trash to move them there
+- Settings shows an Accessibility warning on every tab while the
+  permission is missing, with a button to System Settings
+- Settings → General → Open config.yml
+
+### Changed
+
+- No badges while a mouse button is down, so Option-click and
+  Option-drag (copying in Finder, duplicating in design apps) don't
+  flash them over the Dock
+- Dock clones follow the system's light/dark setting, like the real
+  Dock, rather than DockUtils' own Appearance setting
+- Changing a setting in the settings window keeps your comments and
+  layout in config.yml
+- Badge delay moves in 25 ms steps
+- Running apps in the Dock's recent-apps section get numbers too
+- The Dock is read once for the clones and always-visible badges
+  together, not once per feature
+
+### Fixed
+
+- Apps past the 10th no longer get badges: the 11th showed "1", but
+  Option+1 switched to the first app
+- Holding Option+number no longer keeps cycling windows or flipping the
+  app between hidden and shown
+- The Option-hold badges could stay on screen after Option was released
+- Badges land on the right side of the icons when the Dock is on a
+  display other than the main one
+- Always-visible badges redraw when the appearance switches between
+  light and dark
+- Option+digit is only taken when an app has that number, so keyboard
+  layouts that type `[ ] | { }` with Option+digit keep working
+- An unresponsive app can no longer stall badges and Dock clones for
+  seconds at a time
+- Start at login no longer turns itself back on at launch after being
+  switched off in System Settings → General → Login Items; Settings
+  explains how to allow it there instead
+
 ## 2.0.3
 
 ### Fixed
