@@ -4,6 +4,10 @@ import ApplicationServices
 @main
 struct DockUtils {
   static func main() {
+    // Accessibility calls are synchronous: without a bound, one hung app
+    // stalls the main thread (badges, clones, the event tap) for the
+    // system's default ~6 s. Applies to every element of this process.
+    AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.5)
     let args = CommandLine.arguments
     if args.contains("--daemon") || (args.count == 1 && isAppBundle) {
       runDaemon()
@@ -14,7 +18,7 @@ struct DockUtils {
       if apps.isEmpty { print("(no dock apps found)"); return }
       for a in apps {
         let f = a.frame
-        print("\(a.index % 10): \(a.title) [\(a.bundleIdentifier ?? "-")] frame=\(Int(f.origin.x)),\(Int(f.origin.y)) \(Int(f.width))x\(Int(f.height))")
+        print("\(a.index <= 10 ? String(a.index % 10) : "-"): \(a.title) [\(a.bundleIdentifier ?? "-")] frame=\(Int(f.origin.x)),\(Int(f.origin.y)) \(Int(f.width))x\(Int(f.height))")
       }
       print("\nTip: swift run dock-utils --activate <number>")
       return
@@ -50,47 +54,53 @@ struct DockUtils {
     // Never from a dev CLI build: SMAppService would register this
     // throwaway binary (or unregister the real installed app) at login.
     AppConfig.shared.reload()
-    if isAppBundle, AppConfig.shared.startAtLogin != LaunchAtLogin.isEnabled {
-      try? LaunchAtLogin.setEnabled(AppConfig.shared.startAtLogin)
-    }
+    if isAppBundle { LaunchAtLogin.apply(AppConfig.shared.startAtLogin) }
     AppAppearance.apply()
     let delegate = AppDelegate()
     app.delegate = delegate
     let overlay = OverlayManager()
     let hotkey = HotkeyManager()
     let persistent = PersistentBadges(overlay: overlay, hotkey: hotkey)
-    var current: [DockApp] = []
+    // Switch targets while Option is held; nil until resolved.
+    var current: [DockApp]?
     var pendingShow: DispatchWorkItem?
+    func target(_ number: Int) -> DockApp? {
+      // The tap can ask before onOptionDown has run (both are on the main
+      // thread, but onOptionDown arrives via the main queue).
+      if current == nil { current = DockReader.runningAppItems() }
+      let idx = (number == 0) ? 10 : number
+      return current?.first { $0.index == idx }
+    }
 
     hotkey.onOptionDown = {
       // Resolve targets immediately so a fast Option+number still switches.
       // With always-visible minis on screen there is nothing to pop out:
       // only the delayed hold overlay needs painting otherwise.
-      current = DockReader.runningAppItems()
+      let snapshot = DockReader.runningAppItems()
+      current = snapshot
       guard !AppConfig.shared.badgesAlwaysVisible else { return }
-      let snapshot = current
       // Hold-to-show delay, configurable 0...500 ms: quick Option taps
       // (e.g. Option+letter combos) never flash badges.
       let showDelay = Double(AppConfig.shared.badgeDelayMs) / 1000.0
-      let work = DispatchWorkItem { Task { await overlay.show(apps: snapshot, style: .hold) } }
+      let work = DispatchWorkItem { overlay.show(apps: snapshot, style: .hold) }
       pendingShow = work
       DispatchQueue.main.asyncAfter(deadline: .now() + showDelay, execute: work)
     }
     hotkey.onOptionUp = {
       pendingShow?.cancel()
       pendingShow = nil
-      current = []
+      current = nil
       // Clear a hold overlay if one is up (leaves persistent minis untouched),
       // then restore minis if enabled.
       if overlay.styleShown == .hold {
-        Task { await overlay.hide() }
+        overlay.hide()
       }
       persistent.sync()
     }
+    hotkey.handlesNumber = { target($0) != nil }
     hotkey.onNumber = { number in
-      let idx = (number == 0) ? 10 : number
-      if let target = current.first(where: { $0.index == idx }) {
-        _ = AppActivator.activate(target)
+      if let app = target(number) {
+        _ = AppActivator.activate(app)
       }
     }
 
@@ -136,8 +146,8 @@ struct DockUtils {
       AppConfig.shared.reload()
       guard AppConfig.shared != lastApplied else { return }
       // Dev CLI builds leave login items alone (see runDaemon).
-      if isAppBundle, AppConfig.shared.startAtLogin != LaunchAtLogin.isEnabled {
-        try? LaunchAtLogin.setEnabled(AppConfig.shared.startAtLogin)
+      if isAppBundle, AppConfig.shared.startAtLogin != lastApplied.startAtLogin {
+        LaunchAtLogin.apply(AppConfig.shared.startAtLogin)
       }
       AppAppearance.apply()
       updateStatusItem(settings: settings)

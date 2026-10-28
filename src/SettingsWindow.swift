@@ -1,5 +1,6 @@
 import Cocoa
 import ApplicationServices
+import ServiceManagement
 
 /// Settings window, macOS System Settings style: toolbar tabs (General,
 /// Dock Shortcuts, Dock Clones, About) with grouped boxes. The window
@@ -328,7 +329,16 @@ final class SettingsWindowController: NSWindowController {
     delayLabel.stringValue = "\(AppConfig.shared.badgeDelayMs) ms"
     updateDelayEnabled()
     loginErrorLabel.isHidden = true
+    if DockUtils.isAppBundle, LaunchAtLogin.needsApproval { showLoginNeedsApproval() }
     refreshAccessibility()
+  }
+
+  /// Switched off under Login Items in System Settings: only the user can
+  /// allow it again there.
+  private func showLoginNeedsApproval() {
+    loginErrorLabel.stringValue = "DockUtils is turned off in System Settings → General → Login Items. Turn it on there to start at login."
+    loginErrorLabel.isHidden = false
+    tabs.fitWindow()
   }
 
   @objc private func loginToggled(_ sender: NSSwitch) {
@@ -346,6 +356,11 @@ final class SettingsWindowController: NSWindowController {
       try LaunchAtLogin.setEnabled(sender.state == .on)
       AppConfig.shared.startAtLogin = sender.state == .on
       AppConfig.shared.save()
+      if sender.state == .on, LaunchAtLogin.needsApproval {
+        sender.state = .off
+        showLoginNeedsApproval()
+        SMAppService.openSystemSettingsLoginItems()
+      }
     } catch {
       loginErrorLabel.stringValue = "Couldn't change login item: \(error.localizedDescription)"
       loginErrorLabel.isHidden = false

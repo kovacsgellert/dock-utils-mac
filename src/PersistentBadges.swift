@@ -6,8 +6,8 @@ import Cocoa
 final class PersistentBadges: NSObject {
   private let overlay: OverlayManager
   private weak var hotkey: HotkeyManager?
-  private var active = false
   private var lastKey: [String] = []
+  private var appearanceObservation: NSKeyValueObservation?
 
   init(overlay: OverlayManager, hotkey: HotkeyManager) {
     self.overlay = overlay
@@ -27,14 +27,18 @@ final class PersistentBadges: NSObject {
     Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
       self?.sync()
     }
+    // Light/dark switches (by the system, or in Settings): the glass is
+    // drawn for one appearance.
+    appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+      DispatchQueue.main.async { self?.sync() }
+    }
   }
 
-  var isActive: Bool { active }
-
-  /// Identity + coarse position: renumbers on open/close/reorder, ignores
-   /// sub-pixel jitter (e.g. Dock magnification hover) to avoid flicker.
+  /// Identity + coarse position + appearance: renumbers on open/close/
+  /// reorder and redraws on a light/dark switch, but ignores sub-pixel
+  /// jitter (e.g. Dock magnification hover) to avoid flicker.
   private static func key(_ apps: [DockApp]) -> [String] {
-    apps.map {
+    ["dark:\(AppAppearance.isDark)"] + apps.map {
       "\($0.index)|\($0.title)|\($0.bundleURL?.path ?? "")|\(Int($0.frame.minX / 4))|\(Int($0.frame.minY / 4))"
     }
   }
@@ -50,8 +54,7 @@ final class PersistentBadges: NSObject {
       // on they stay put: no hold overlay replaces them, so hiding would
       // flash the Dock bare until release.
       if !AppConfig.shared.badgesAlwaysVisible, overlay.styleShown == .persistent {
-        Task { await overlay.hide() }
-        active = false
+        overlay.hide()
       }
       return
     }
@@ -60,8 +63,7 @@ final class PersistentBadges: NSObject {
     // Re-show when the overlay isn't showing persistent minis (e.g. a hold
     // overlay took over, or they were hidden) or the Dock changed.
     guard overlay.styleShown != .persistent || k != lastKey else { return }
-    active = true
     lastKey = k
-    Task { await overlay.show(apps: apps, style: .persistent) }
+    overlay.show(apps: apps, style: .persistent)
   }
 }

@@ -167,27 +167,32 @@ final class DockClones {
     }
   }
 
-  /// The display the real Dock is on: most overlap, else the nearest
-  /// (an auto-hidden Dock sits just past the edge), else the main display.
+  /// The display the real Dock is on.
   private static func screenID(containing dock: CGRect) -> CGDirectDisplayID? {
-    let screens = NSScreen.screens
-    guard !dock.isEmpty else { return screens.first?.displayID }
-    func overlap(_ s: NSScreen) -> CGFloat {
-      let r = s.frame.intersection(dock)
-      return r.isNull ? 0 : r.width * r.height
-    }
-    func distance(_ s: NSScreen) -> CGFloat {
-      hypot(s.frame.midX - dock.midX, s.frame.midY - dock.midY)
-    }
-    if let best = screens.max(by: { overlap($0) < overlap($1) }), overlap(best) > 0 {
-      return best.displayID
-    }
-    return screens.min(by: { distance($0) < distance($1) })?.displayID
+    NSScreen.containing(dock)?.displayID
   }
 }
 
 extension NSScreen {
   var displayID: CGDirectDisplayID? {
     (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+  }
+
+  /// The screen showing most of `rect` (Cocoa coordinates), else the
+  /// nearest one (an auto-hidden Dock sits just past the edge), else the
+  /// main display.
+  static func containing(_ rect: CGRect) -> NSScreen? {
+    guard !rect.isEmpty else { return screens.first }
+    func overlap(_ s: NSScreen) -> CGFloat {
+      let r = s.frame.intersection(rect)
+      return r.isNull ? 0 : r.width * r.height
+    }
+    func distance(_ s: NSScreen) -> CGFloat {
+      hypot(s.frame.midX - rect.midX, s.frame.midY - rect.midY)
+    }
+    if let best = screens.max(by: { overlap($0) < overlap($1) }), overlap(best) > 0 {
+      return best
+    }
+    return screens.min(by: { distance($0) < distance($1) })
   }
 }

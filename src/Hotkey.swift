@@ -8,6 +8,10 @@ final class HotkeyManager {
   var onOptionDown: (() -> Void)?
   var onOptionUp: (() -> Void)?
   var onNumber: ((Int) -> Void)? // 0-9 as pressed (0 = 10th)
+  /// Whether a number has an app to switch to. Others reach the frontmost
+  /// app, so Option+digit still types `[`, `|`, `{` etc. on layouts that
+  /// put them there. Called from the tap, on the main thread.
+  var handlesNumber: ((Int) -> Bool)?
 
   private var tap: CFMachPort?
   private var src: CFRunLoopSource?
@@ -32,7 +36,6 @@ final class HotkeyManager {
     guard tap == nil else { return true }
     let mask: CGEventMask =
       (1 << CGEventType.keyDown.rawValue) |
-      (1 << CGEventType.keyUp.rawValue) |
       (1 << CGEventType.flagsChanged.rawValue)
     guard let t = CGEvent.tapCreate(
       tap: .cgSessionEventTap,
@@ -75,9 +78,13 @@ final class HotkeyManager {
     case .keyDown:
       guard optionHeld, Self.isOptionOnly(event.flags) else { return pass }
       let code = event.getIntegerValueField(.keyboardEventKeycode)
-      guard let number = Self.numberKeycodes[code] else { return pass }
-      // Swallow auto-repeat; swallow the press so Option+2 doesn't type ™ etc.
-      DispatchQueue.main.async { [weak self] in self?.onNumber?(number) }
+      guard let number = Self.numberKeycodes[code], handlesNumber?(number) ?? true else { return pass }
+      // Swallow the press so Option+2 doesn't type ™ etc.; swallow
+      // auto-repeat too, without acting on it, so holding the key doesn't
+      // cycle windows or flip the app between hidden and shown.
+      if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+        DispatchQueue.main.async { [weak self] in self?.onNumber?(number) }
+      }
       return nil
     default:
       return pass
