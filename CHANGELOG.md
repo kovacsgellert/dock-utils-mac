@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.2.0
+
+### New
+
+- Dock clones: choose where the clone goes on each display, from a map
+  of your displays in Settings → Dock Clones: the bottom, left or right
+  edge, centered or at either end, or no clone at all. Each display
+  remembers its choice and gets it back when it's connected again;
+  displays you haven't set follow the Dock, as before. Stored in
+  config.yml as one `dock_clones_display_<uuid>` line per display
+
+### Fixed
+
+- Dock clones update when a different display is connected in the place
+  of one with the same size
+
 ## 2.1.0
 
 ### New
