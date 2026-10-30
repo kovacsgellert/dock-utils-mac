@@ -2,11 +2,16 @@
 # Assemble DockUtils.app from SwiftPM release builds: a universal binary
 # (Apple Silicon + Intel).
 # Usage: VERSION=0.1.0 OUT=dist ./scripts/package-app.sh
+# NAME and BUNDLE_ID make a separately installable variant (see
+# dev-app.sh); ARCHS="arm64" builds one architecture only, faster.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${VERSION:-$(git -C "$ROOT" describe --tags --always 2>/dev/null || echo 0.0.0-dev)}"
 OUT="${OUT:-$ROOT/dist}"
-APP="$OUT/DockUtils.app"
+NAME="${NAME:-DockUtils}"
+BUNDLE_ID="${BUNDLE_ID:-com.kovacsgellert.dock-utils}"
+ARCHS="${ARCHS:-arm64 x86_64}"
+APP="$OUT/$NAME.app"
 # CFBundleVersion must be numbers and dots: 2.1.0 for 2.1.0-beta1 too.
 BUILD="${VERSION%%-*}"
 [[ "$BUILD" =~ ^[0-9]+(\.[0-9]+)*$ ]] || BUILD=0
@@ -14,7 +19,8 @@ BUILD="${VERSION%%-*}"
 # One build per architecture (works with just the Command Line Tools,
 # unlike --arch), joined with lipo.
 BINS=()
-for TRIPLE in arm64-apple-macosx14.0 x86_64-apple-macosx14.0; do
+for ARCH in $ARCHS; do
+  TRIPLE="$ARCH-apple-macosx14.0"
   swift build -c release --product dock-utils --triple "$TRIPLE" --package-path "$ROOT"
   BINS+=("$(swift build -c release --triple "$TRIPLE" --show-bin-path --package-path "$ROOT")/dock-utils")
 done
@@ -23,7 +29,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 lipo -create -output "$APP/Contents/MacOS/dock-utils" "${BINS[@]}"
 cp "$ROOT/assets/dock-utils.icns" "$ROOT/assets/menubar.png" "$APP/Contents/Resources/"
-sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" "$ROOT/packaging/Info.plist" > "$APP/Contents/Info.plist"
+sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" \
+  -e "s|<string>DockUtils</string>|<string>$NAME</string>|" \
+  -e "s|<string>com.kovacsgellert.dock-utils</string>|<string>$BUNDLE_ID</string>|" \
+  "$ROOT/packaging/Info.plist" > "$APP/Contents/Info.plist"
 if [ -n "${SIGNING_P12:-}" ]; then
   # Self-signed certificate (scripts/make-signing-cert.sh): a stable identity,
   # so the Accessibility grant survives updates. Imported into a throwaway

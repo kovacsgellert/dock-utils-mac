@@ -49,7 +49,10 @@ Under the hood: Dock icon positions come from the Accessibility API (`AXDockItem
 ```sh
 swift build
 ./scripts/test.sh   # swift test, plus the paths Swift Testing needs without Xcode
+./scripts/dev-app.sh   # build and launch "DockUtils Dev.app" for testing
 ```
+
+`dev-app.sh` builds a separate app (`com.kovacsgellert.dock-utils.dev`, next to an installed DockUtils) signed with a local self-signed certificate it creates in `~/.codesign-dev` on first run, so you grant it Accessibility once and the grant survives rebuilds. It shares DockUtils' config.yml; quit the installed DockUtils while testing.
 
 ## Install a released version
 
