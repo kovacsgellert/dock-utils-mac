@@ -23,7 +23,8 @@ Badge placement follows the Dock automatically (left / right / bottom) based on 
 
 Optional, off by default: **Settings → Dock Clones → Show Dock clones on other displays** (or `dock_clones: true`) puts a clone of the Dock on every display the real Dock isn't on, like ExtraDock's Live Dock.
 
-- Same items in the same order (apps, separator, folders, Trash), with running indicators, badges (unread counts) and hover labels. Matches the Dock's position (bottom/left/right), icon size and auto-hide.
+- Same items in the same order (apps, separator, folders, Trash), with running indicators, badges (unread counts) and hover labels. Matches the Dock's icon size and auto-hide, and by default its position (bottom/left/right).
+- **Position per display:** Settings → Dock Clones shows your displays as they're arranged. Click near a display's bottom, left or right edge to put its clone there, at either end or centered; click the middle of a display to make it follow the Dock again or to turn its clone off. Each display remembers its choice (by display UUID), so it comes back when you reconnect that display. Displays you haven't set follow the Dock.
 - Clicking an app presses the real Dock item, so it launches, activates or un-minimizes exactly like a Dock click. Folders and Trash open in Finder.
 - Right-click (or Control-click) an item for Hide/Show, Show in Finder and Quit. Drop files on an app to open them with it, or on the Trash to move them there.
 - Light or dark like the real Dock: the clones follow the system appearance, not DockUtils' own Appearance setting.
@@ -90,7 +91,10 @@ badge_delay_ms: 100  # 0...500
 badges_always_visible: false  # persistent mini-badges on Dock icons
 dock_clones: false  # clone the Dock onto your other displays
 dock_clones_keep_windows_clear: true  # shrink zoomed/tiled windows out of the clones
+dock_clones_display_37d8832a-2d66-02ca-b9f7-8f30a301b230: left-start  # DELL U2720Q
 ```
+
+The `dock_clones_display_<uuid>` lines are the per-display clone positions, written by the settings window: `bottom`, `left` or `right`, optionally followed by `-start` or `-end` (the left or top end of the edge, or the right or bottom end), or `off`. Displays without a line follow the Dock. The comment names the display.
 
 The file is created on first launch (existing installs migrate their current settings into it). Hand edits apply as soon as the file is saved, no relaunch needed. Everything is also editable from the settings window (**General → Open config.yml** opens the file); changes made there update values in place and keep your comments.
 

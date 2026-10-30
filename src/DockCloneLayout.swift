@@ -2,7 +2,8 @@ import Cocoa
 
 /// Geometry of one Dock clone on one screen, in Cocoa (bottom-left origin)
 /// global coordinates. Proportions follow the system Dock: a bar `tile + 2·pad`
-/// thick, centered along its edge, flush with the screen edge.
+/// thick, flush with the screen edge, centered along it unless the display's
+/// placement puts it at one end.
 struct DockCloneLayout {
   let edge: DockEdge
   let tile: CGFloat
@@ -23,8 +24,11 @@ struct DockCloneLayout {
   static func slot(tile: CGFloat) -> CGFloat { tile * 19 / 18 }
   static func separatorSlot(tile: CGFloat) -> CGFloat { tile * 0.475 }
 
-  init(items: [DockItem], prefs: DockPrefs, screen: CGRect) {
-    edge = prefs.edge
+  /// `edge` defaults to the real Dock's. `top` is where a side clone at the
+  /// `.start` end stops, below the menu bar (defaults to the screen top).
+  init(items: [DockItem], prefs: DockPrefs, screen: CGRect, edge: DockEdge? = nil, align: CloneAlign = .center, top: CGFloat? = nil) {
+    let edge = edge ?? prefs.edge
+    self.edge = edge
     tile = prefs.tileSize
     let pad = Self.padding(tile: tile)
     let thick = tile + 2 * pad
@@ -40,22 +44,35 @@ struct DockCloneLayout {
         : CGRect(x: 0, y: along, width: thick, height: len))
       along += len
     }
-    let length = min((along + endPad).rounded(), horizontal ? screen.width : screen.height)
+    let top = min(top ?? screen.maxY, screen.maxY)
+    let room = horizontal ? screen.width : align == .start ? top - screen.minY : screen.height
+    let length = min((along + endPad).rounded(), room)
     if !horizontal {
       // Cocoa y grows upward but Dock items run top to bottom.
       rects = rects.map { CGRect(x: $0.minX, y: length - $0.maxY, width: $0.width, height: $0.height) }
     }
     itemRects = rects
 
+    // Where the bar starts along its edge (left end, or bottom end in Cocoa y).
+    let x = switch align {
+    case .start: screen.minX
+    case .center: screen.midX - length / 2
+    case .end: screen.maxX - length
+    }
+    let y = switch align {
+    case .start: top - length
+    case .center: screen.midY - length / 2
+    case .end: screen.minY
+    }
     switch edge {
     case .bottom:
-      frame = CGRect(x: screen.midX - length / 2, y: screen.minY, width: length, height: thick)
+      frame = CGRect(x: x, y: screen.minY, width: length, height: thick)
       reserved = CGRect(x: screen.minX, y: screen.minY, width: screen.width, height: thick)
     case .left:
-      frame = CGRect(x: screen.minX, y: screen.midY - length / 2, width: thick, height: length)
+      frame = CGRect(x: screen.minX, y: y, width: thick, height: length)
       reserved = CGRect(x: screen.minX, y: screen.minY, width: thick, height: screen.height)
     case .right:
-      frame = CGRect(x: screen.maxX - thick, y: screen.midY - length / 2, width: thick, height: length)
+      frame = CGRect(x: screen.maxX - thick, y: y, width: thick, height: length)
       reserved = CGRect(x: screen.maxX - thick, y: screen.minY, width: thick, height: screen.height)
     }
   }

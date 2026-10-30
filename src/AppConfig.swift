@@ -16,6 +16,13 @@ struct AppConfig: Equatable {
   var dockClones = false
   /// Shrink zoomed/tiled windows out of the clones' area.
   var dockClonesKeepWindowsClear = true
+  /// Where the clone goes on each display seen so far, by display UUID
+  /// (lowercased). Displays not in here follow the Dock.
+  var cloneDisplays: [String: CloneDisplay] = [:]
+
+  /// One `dock_clones_display_<uuid>: <placement>  # <name>` line per
+  /// remembered display, after the fixed settings.
+  static let displayKeyPrefix = "dock_clones_display_"
 
   /// Every setting as it appears in the file, in file order. Adding a
   /// setting means adding a property above and a line here.
@@ -123,6 +130,15 @@ struct AppConfig: Equatable {
         NSLog("DockUtils: ignoring invalid \(key.name) in \(fileURL.path): \(raw)")
       }
     }
+    for entry in lines(text).compactMap(\.entry) where entry.key.hasPrefix(displayKeyPrefix) {
+      let uuid = String(entry.key.dropFirst(displayKeyPrefix.count))
+      guard !uuid.isEmpty, config.cloneDisplays[uuid] == nil else { continue }
+      guard let placement = ClonePlacement(configValue: entry.value) else {
+        NSLog("DockUtils: ignoring invalid \(entry.key) in \(fileURL.path): \(entry.value)")
+        continue
+      }
+      config.cloneDisplays[uuid] = CloneDisplay(placement: placement, name: entry.comment ?? "")
+    }
     return (config, missingKeys)
   }
 
@@ -139,8 +155,8 @@ struct AppConfig: Equatable {
   }
 
   /// The file's text with these settings. An existing file keeps its
-  /// comments, blank lines and order: only values change, and missing
-  /// settings are added at the end.
+  /// comments, blank lines and order: only values change, missing
+  /// settings are added at the end, and forgotten displays' lines go.
   func encode(updating existing: String?) -> String {
     let header = """
       # dock-utils settings — portable, safe to edit by hand or scripts.
@@ -150,6 +166,13 @@ struct AppConfig: Equatable {
     var out: [String] = []
     var written: Set<String> = []
     for line in Self.lines(existing ?? header) {
+      if let entry = line.entry, entry.key.hasPrefix(Self.displayKeyPrefix) {
+        let uuid = String(entry.key.dropFirst(Self.displayKeyPrefix.count))
+        guard let display = cloneDisplays[uuid], !written.contains(entry.key) else { continue }
+        written.insert(entry.key)
+        out.append(String(line.text[..<entry.valueStart]) + display.placement.configValue + String(line.text[entry.valueEnd...]))
+        continue
+      }
       guard let entry = line.entry, !written.contains(entry.key),
             let key = Self.keys.first(where: { $0.name == entry.key })
       else { out.append(line.text); continue }
@@ -160,6 +183,11 @@ struct AppConfig: Equatable {
     for key in Self.keys where !written.contains(key.name) {
       out.append("\(key.name): \(key.write(self))" + (key.comment.map { "  # \($0)" } ?? ""))
     }
+    for (uuid, display) in cloneDisplays.sorted(by: { $0.key < $1.key })
+    where !written.contains(Self.displayKeyPrefix + uuid) {
+      out.append("\(Self.displayKeyPrefix)\(uuid): \(display.placement.configValue)"
+        + (display.name.isEmpty ? "" : "  # \(display.name)"))
+    }
     return out.joined(separator: "\n") + "\n"
   }
 
@@ -168,7 +196,7 @@ struct AppConfig: Equatable {
   /// One line of the file and, for a `key: value` line, where its value is.
   private struct Line {
     let text: String
-    let entry: (key: String, value: String, valueStart: String.Index, valueEnd: String.Index)?
+    let entry: (key: String, value: String, valueStart: String.Index, valueEnd: String.Index, comment: String?)?
   }
 
   private static func lines(_ text: String) -> [Line] {
@@ -182,11 +210,13 @@ struct AppConfig: Equatable {
       // (and the spaces before it) or the end of the line.
       let afterColon = text[text.index(after: colon)...]
       let start = afterColon.firstIndex { $0 != " " && $0 != "\t" } ?? afterColon.endIndex
-      var end = afterColon[start...].range(of: " #")?.lowerBound ?? afterColon.endIndex
+      let hash = afterColon[start...].range(of: " #")
+      var end = hash?.lowerBound ?? afterColon.endIndex
       while end > start, text[text.index(before: end)] == " " || text[text.index(before: end)] == "\t" {
         end = text.index(before: end)
       }
-      return Line(text: text, entry: (key, String(text[start..<end]), start, end))
+      let comment = hash.map { text[$0.upperBound...].trimmingCharacters(in: .whitespaces) }
+      return Line(text: text, entry: (key, String(text[start..<end]), start, end, comment))
     }
   }
 

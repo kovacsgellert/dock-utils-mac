@@ -36,6 +36,34 @@ struct DockCloneLayoutTests {
     }
   }
 
+  @Test func placementOverridesTheDocksEdge() {
+    let layout = DockCloneLayout(items: items, prefs: DockPrefs(edge: .bottom, tileSize: 48), screen: screen, edge: .left)
+    #expect(layout.edge == .left)
+    #expect(layout.frame.minX == screen.minX)
+  }
+
+  @Test func alignedClonesSitAtTheirEnd() {
+    let prefs = DockPrefs(edge: .bottom, tileSize: 48)
+    let top = screen.maxY - 25  // below the menu bar
+    let bottomStart = DockCloneLayout(items: items, prefs: prefs, screen: screen, align: .start, top: top)
+    #expect(bottomStart.frame.minX == screen.minX)
+    let bottomEnd = DockCloneLayout(items: items, prefs: prefs, screen: screen, align: .end, top: top)
+    #expect(bottomEnd.frame.maxX == screen.maxX)
+    let rightStart = DockCloneLayout(items: items, prefs: prefs, screen: screen, edge: .right, align: .start, top: top)
+    #expect(rightStart.frame.maxY == top)
+    #expect(rightStart.frame.maxX == screen.maxX)
+    let leftEnd = DockCloneLayout(items: items, prefs: prefs, screen: screen, edge: .left, align: .end, top: top)
+    #expect(leftEnd.frame.minY == screen.minY)
+  }
+
+  @Test func topAlignedSideCloneStaysBelowTheMenuBar() {
+    let many = Array(repeating: item(.app), count: 100)
+    let top = screen.maxY - 25
+    let layout = DockCloneLayout(items: many, prefs: DockPrefs(edge: .left, tileSize: 64), screen: screen, align: .start, top: top)
+    #expect(layout.frame.maxY == top)
+    #expect(layout.frame.minY == screen.minY)
+  }
+
   @Test func longDockIsClampedToTheScreen() {
     let many = Array(repeating: item(.app), count: 100)
     let layout = DockCloneLayout(items: many, prefs: DockPrefs(edge: .bottom, tileSize: 64), screen: screen)

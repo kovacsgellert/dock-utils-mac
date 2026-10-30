@@ -16,7 +16,9 @@ final class DockClones {
   private var snapshot = DockSnapshot()
   private var prefs = DockPrefs()
   private var config = AppConfig.shared
-  private var screensKey: [CGRect] = []
+  /// Each display's UUID and frame: a different monitor plugged in where
+  /// another was, at the same size, still counts as a change.
+  private var screensKey: [String] = []
   private var dockScreenID: CGDirectDisplayID?
   /// Displays showing a full-screen app, as of the last rebuild.
   private var fullscreenKey: Set<CGDirectDisplayID> = []
@@ -50,7 +52,7 @@ final class DockClones {
     }
     guard let fresh = DockModel.shared.snapshot else { return }
     let freshPrefs = DockPrefs.read()
-    let freshScreens = NSScreen.screens.map(\.frame)
+    let freshScreens = NSScreen.screens.map { "\($0.displayUUID ?? "?") \($0.frame)" }
     let freshDockScreen = Self.screenID(containing: Coords.flip(fresh.frame))
     let freshFullscreen = FullscreenSpaces.shared.displays
     let changed = force || fresh != snapshot || freshPrefs != prefs || freshConfig != config
@@ -71,8 +73,19 @@ final class DockClones {
       // The real Dock hides under a full-screen app; so does the clone, and
       // it comes back once its display no longer shows a full-screen app.
       guard let id = screen.displayID, id != dockScreenID, !fullscreenKey.contains(id) else { continue }
+      // Displays seen before get their remembered placement back.
+      let placement = screen.displayUUID.flatMap { config.cloneDisplays[$0]?.placement } ?? .followDock
+      let edge: DockEdge?, align: CloneAlign
+      switch placement {
+      case .off: continue
+      case .followDock: (edge, align) = (nil, .center)
+      case let .edge(e, a): (edge, align) = (e, a)
+      }
       keep.insert(id)
-      let layout = DockCloneLayout(items: snapshot.items, prefs: prefs, screen: screen.frame)
+      let layout = DockCloneLayout(
+        items: snapshot.items, prefs: prefs, screen: screen.frame,
+        edge: edge, align: align, top: screen.visibleFrame.maxY
+      )
       if let panel = panels[id] {
         panel.update(layout: layout, items: snapshot.items)
       } else {

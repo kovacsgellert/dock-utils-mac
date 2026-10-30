@@ -14,6 +14,7 @@ final class SettingsWindowController: NSWindowController {
   private var alwaysSwitch: NSSwitch!
   private var clonesSwitch: NSSwitch!
   private var keepClearSwitch: NSSwitch!
+  private let arrangement = DisplayArrangementView()
   private var themePopup: NSPopUpButton!
   private var delaySlider: NSSlider!
   private var delayLabel: NSTextField!
@@ -62,6 +63,14 @@ final class SettingsWindowController: NSWindowController {
       self, selector: #selector(refreshAccessibility),
       name: .accessibilityChanged, object: nil
     )
+    // The display map follows displays coming and going, the Dock moving
+    // and hand edits of config.yml while the window is open.
+    for name in [NSApplication.didChangeScreenParametersNotification, .dockSnapshotUpdated, .appConfigChanged] {
+      NotificationCenter.default.addObserver(self, selector: #selector(refreshArrangement), name: name, object: nil)
+    }
+    arrangement.onChange = { [weak self] uuid, name, placement in
+      self?.placementChosen(uuid: uuid, name: name, placement: placement)
+    }
   }
 
   private func generalPage() -> [NSView] {
@@ -145,6 +154,10 @@ final class SettingsWindowController: NSWindowController {
       section(title: "Dock Clones", rows: [
         ("Show Dock clones on other displays", clonesSwitch),
         ("Keep windows clear of the clones", keepClearSwitch),
+      ]),
+      section(title: "Position", rows: [
+        (nil, arrangement),
+        (nil, hint("Click near a display's bottom, left or right edge to put its clone there: toward either end, or centered. Click the middle of a display to make it follow the Dock or turn its clone off. Each display remembers its choice.", width: DisplayArrangementView.size.width)),
       ]),
     ]
   }
@@ -265,12 +278,12 @@ final class SettingsWindowController: NSWindowController {
   }
 
   /// Secondary explanatory text at the top of a tab.
-  private func hint(_ text: String) -> NSTextField {
+  private func hint(_ text: String, width: CGFloat = SettingsWindowController.width - 40) -> NSTextField {
     let field = NSTextField(wrappingLabelWithString: text)
     field.font = .systemFont(ofSize: 12)
     field.textColor = .secondaryLabelColor
     // Bound the unwrapped intrinsic width, otherwise the stack overflows.
-    field.preferredMaxLayoutWidth = Self.width - 40
+    field.preferredMaxLayoutWidth = width
     return field
   }
 
@@ -362,6 +375,7 @@ final class SettingsWindowController: NSWindowController {
     clonesSwitch.state = AppConfig.shared.dockClones ? .on : .off
     keepClearSwitch.state = AppConfig.shared.dockClonesKeepWindowsClear ? .on : .off
     updateClonesEnabled()
+    MainActor.assumeIsolated { arrangement.reload() }
     themePopup.selectItem(at: AppAppearance.allCases.firstIndex(of: AppAppearance.current) ?? 0)
     delaySlider.doubleValue = Double(AppConfig.shared.badgeDelayMs)
     delayLabel.stringValue = "\(AppConfig.shared.badgeDelayMs) ms"
@@ -461,6 +475,26 @@ final class SettingsWindowController: NSWindowController {
   /// Clone options only matter while clones are on.
   private func updateClonesEnabled() {
     keepClearSwitch.isEnabled = AppConfig.shared.dockClones
+    arrangement.isEnabled = AppConfig.shared.dockClones
+  }
+
+  @objc private func refreshArrangement() {
+    guard window?.isVisible == true else { return }
+    // Hand edits of config.yml are already reloaded into AppConfig.shared.
+    updateClonesEnabled()
+    MainActor.assumeIsolated { arrangement.reload() }
+  }
+
+  /// Following the Dock is what unknown displays get, so it's stored as
+  /// forgetting the display.
+  private func placementChosen(uuid: String, name: String, placement: ClonePlacement) {
+    if placement == .followDock {
+      AppConfig.shared.cloneDisplays[uuid] = nil
+    } else {
+      AppConfig.shared.cloneDisplays[uuid] = CloneDisplay(placement: placement, name: name)
+    }
+    AppConfig.shared.save()
+    NotificationCenter.default.post(name: .appConfigChanged, object: nil)
   }
 
   @objc private func keepClearToggled(_ sender: NSSwitch) {
