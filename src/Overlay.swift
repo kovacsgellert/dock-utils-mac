@@ -57,7 +57,7 @@ private extension NSShadow {
 enum BadgeStyle {
   /// Option-hold: large badges beside icons, toward the screen center.
   case hold
-  /// Always-visible: small badges inset in the icon's top-left corner,
+  /// Always-visible: small badges inset in the icon's top-right corner,
   /// fully inside the Dock perimeter.
   case persistent
 }
@@ -93,18 +93,24 @@ final class OverlayManager {
     let edge = DockPrefs.read().edge
     // The real Dock's inner (screen-center-facing) edge on a side Dock:
     // where visibleFrame begins or ends (nil when auto-hidden, as it then
-    // reserves nothing).
+    // reserves nothing). Not needed at the bottom: its item frames already
+    // reach the bar's top.
     let visible = screen.visibleFrame
-    let dockInnerX: CGFloat? = switch edge {
+    let dockInner: CGFloat? = switch edge {
     case .left: visible.minX > screen.frame.minX ? visible.minX : nil
     case .right: visible.maxX < screen.frame.maxX ? visible.maxX : nil
     case .bottom: nil
     }
     // Same numbers on the Dock clones on other displays.
-    var targets = icons.map { (app: $0.app, icon: $0.icon, edge: edge, dockInnerX: dockInnerX) }
+    var targets = icons.map { (app: $0.app, icon: $0.icon, edge: edge, dockInner: dockInner) }
     for app in apps {
       for clone in DockClones.shared.icons(of: app.bundleURL, title: app.title) {
-        targets.append((app, clone.frame, clone.edge, clone.edge == .right ? clone.dock.minX : clone.dock.maxX))
+        let inner = switch clone.edge {
+        case .bottom: clone.dock.maxY
+        case .left: clone.dock.maxX
+        case .right: clone.dock.minX
+        }
+        targets.append((app, clone.frame, clone.edge, inner))
       }
     }
     // Not over a full-screen app: the real Dock hides there, and the clone
@@ -114,8 +120,8 @@ final class OverlayManager {
       fullscreen.contains { $0.frame.contains(CGPoint(x: target.icon.midX, y: target.icon.midY)) }
     }
 
-    for (i, (app, icon, edge, dockInnerX)) in targets.enumerated() {
-      let origin = Self.badgeOrigin(for: icon, edge: edge, dockInnerX: dockInnerX, diameter: diameter, style: style)
+    for (i, (app, icon, edge, dockInner)) in targets.enumerated() {
+      let origin = Self.badgeOrigin(for: icon, edge: edge, dockInner: dockInner, diameter: diameter, style: style)
       if i == panels.count { panels.append(Self.makePanel()) }
       let panel = panels[i]
       panel.setFrame(CGRect(origin: origin, size: CGSize(width: diameter, height: diameter)), display: false)
@@ -157,15 +163,21 @@ final class OverlayManager {
 
   /// Where a badge goes for an icon (Cocoa coordinates): beside it toward
   /// the screen center while holding Option, on its corner when persistent.
-  static func badgeOrigin(for icon: CGRect, edge: DockEdge, dockInnerX: CGFloat?, diameter: CGFloat, style: BadgeStyle) -> CGPoint {
+  /// `dockInner` is the Dock's screen-center-facing edge (x on a side Dock,
+  /// y at the bottom), when known.
+  static func badgeOrigin(for icon: CGRect, edge: DockEdge, dockInner: CGFloat?, diameter: CGFloat, style: BadgeStyle) -> CGPoint {
     switch style {
     case .persistent:
       // A corner of the icon, inset so the badge sits on the icon, inside
-      // the Dock perimeter: top-left with the Dock at the bottom; on a side
-      // Dock the bottom corner facing the screen center, pushed toward the
-      // Dock's inner edge as far as still fits inside the Dock.
+      // the Dock perimeter: top-right with the Dock at the bottom; on a side
+      // Dock the bottom corner facing the screen center. Either way pushed
+      // toward the Dock's inner edge as far as still fits inside the Dock.
       guard edge != .bottom else {
-        return CGPoint(x: icon.minX + cornerInset, y: icon.maxY - diameter - cornerInset)
+        // 1 pt inside the Dock's top; without it, the icon frame's top
+        // (the real Dock's item frames already reach the bar's top).
+        // Slightly over the icon's right edge.
+        let top = dockInner.map { $0 - 1 } ?? icon.maxY - cornerInset
+        return CGPoint(x: icon.maxX + 2 - diameter, y: top - diameter)
       }
       // The Dock's item frames are wider than the icon: use the square
       // in their middle so the badge lands on the icon's corner.
@@ -174,10 +186,10 @@ final class OverlayManager {
       // 1 pt inside the Dock's border; without a known edge, slightly over
       // the icon's.
       if edge == .left {
-        let right = dockInnerX.map { $0 - 1 } ?? square.maxX + 2
+        let right = dockInner.map { $0 - 1 } ?? square.maxX + 2
         return CGPoint(x: right - diameter, y: square.minY + cornerInset)
       }
-      let left = dockInnerX.map { $0 + 1 } ?? square.minX - 2
+      let left = dockInner.map { $0 + 1 } ?? square.minX - 2
       return CGPoint(x: left, y: square.minY + cornerInset)
     case .hold:
       switch edge {

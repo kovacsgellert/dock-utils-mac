@@ -89,19 +89,24 @@ struct BadgeOriginTests {
   let icon = CGRect(x: 100, y: 0, width: 48, height: 48)
 
   @Test func holdBadgesSitTowardTheScreenCenter() {
-    let bottom = OverlayManager.badgeOrigin(for: icon, edge: .bottom, dockInnerX: nil, diameter: 28, style: .hold)
+    let bottom = OverlayManager.badgeOrigin(for: icon, edge: .bottom, dockInner: nil, diameter: 28, style: .hold)
     #expect(bottom.y >= icon.maxY)
-    let left = OverlayManager.badgeOrigin(for: icon, edge: .left, dockInnerX: nil, diameter: 28, style: .hold)
+    let left = OverlayManager.badgeOrigin(for: icon, edge: .left, dockInner: nil, diameter: 28, style: .hold)
     #expect(left.x >= icon.maxX)
-    let right = OverlayManager.badgeOrigin(for: icon, edge: .right, dockInnerX: nil, diameter: 28, style: .hold)
+    let right = OverlayManager.badgeOrigin(for: icon, edge: .right, dockInner: nil, diameter: 28, style: .hold)
     #expect(right.x + 28 <= icon.minX)
   }
 
   @Test func persistentBadgesStayInsideTheDock() {
-    let bottom = OverlayManager.badgeOrigin(for: icon, edge: .bottom, dockInnerX: nil, diameter: 20, style: .persistent)
-    #expect(icon.contains(CGRect(origin: bottom, size: CGSize(width: 20, height: 20))))
+    let bottom = OverlayManager.badgeOrigin(for: icon, edge: .bottom, dockInner: nil, diameter: 20, style: .persistent)
+    // On the icon's top-right corner, just over its right edge.
+    #expect(bottom.y + 20 <= icon.maxY && bottom.x + 20 == icon.maxX + 2)
+    // On a bottom clone: flush against (1 pt inside) the bar's top, which
+    // is above the tile.
+    let clone = OverlayManager.badgeOrigin(for: icon, edge: .bottom, dockInner: 60, diameter: 20, style: .persistent)
+    #expect(clone.y + 20 == 59)
     // On a left Dock: flush against (1 pt inside) the Dock's inner edge.
-    let left = OverlayManager.badgeOrigin(for: icon, edge: .left, dockInnerX: 160, diameter: 20, style: .persistent)
+    let left = OverlayManager.badgeOrigin(for: icon, edge: .left, dockInner: 160, diameter: 20, style: .persistent)
     #expect(left.x + 20 == 159)
   }
 }
