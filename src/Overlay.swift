@@ -153,7 +153,9 @@ final class OverlayManager {
       backing: .buffered,
       defer: false
     )
-    panel.level = .screenSaver
+    // Above the Dock, its clones and the menu bar; below menus, so a Dock
+    // or clone menu isn't drawn under the badges.
+    panel.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue - 1)
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.ignoresMouseEvents = true

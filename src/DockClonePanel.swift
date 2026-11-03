@@ -61,7 +61,12 @@ final class DockClonePanel {
       root.addSubview(view)
     }
     for (item, rect) in zip(items, layout.itemRects) where item.kind == .separator {
-      root.addSubview(SeparatorView(frame: rect, edge: layout.edge, tile: layout.tile))
+      let view = SeparatorView(frame: rect, edge: layout.edge, tile: layout.tile)
+      view.menuProvider = { [weak self] in
+        self?.bubble.hide()
+        return self?.menuFor?(item)
+      }
+      root.addSubview(view)
     }
     panel.contentView = root
     panel.setFrame(isRevealed ? layout.frame : layout.hiddenFrame, display: true)
@@ -201,7 +206,10 @@ private final class DockItemView: NSView {
     label.draw(at: CGPoint(x: pill.midX - size.width / 2, y: pill.midY - size.height / 2))
   }
 
-  override func mouseDown(with _: NSEvent) { pressed = true }
+  override func mouseDown(with event: NSEvent) {
+    if event.modifierFlags.contains(.control) { return showMenu() }
+    pressed = true
+  }
 
   override func mouseUp(with event: NSEvent) {
     pressed = false
@@ -211,7 +219,11 @@ private final class DockItemView: NSView {
   override func mouseEntered(with _: NSEvent) { onHover?(true) }
   override func mouseExited(with _: NSEvent) { onHover?(false) }
 
-  override func menu(for _: NSEvent) -> NSMenu? { menuProvider?() }
+  override func rightMouseDown(with _: NSEvent) { showMenu() }
+
+  private func showMenu() {
+    if let menu = menuProvider?() { popUpBesideBar(menu, from: self, edge: edge) }
+  }
 
   // MARK: Dropping files
 
@@ -253,6 +265,7 @@ final class ActionMenuItem: NSMenuItem {
 }
 
 private final class SeparatorView: NSView {
+  var menuProvider: (() -> NSMenu?)?
   private let edge: DockEdge
   private let tile: CGFloat
 
@@ -273,6 +286,35 @@ private final class SeparatorView: NSView {
       : CGRect(x: bounds.midX - len / 2, y: bounds.midY - 0.5, width: len, height: 1)
     line.fill()
   }
+
+  override func mouseDown(with event: NSEvent) {
+    if event.modifierFlags.contains(.control) { rightMouseDown(with: event) }
+  }
+
+  override func rightMouseDown(with _: NSEvent) {
+    if let menu = menuProvider?() { popUpBesideBar(menu, from: self, edge: edge) }
+  }
+}
+
+/// Pops an item's menu up beside the bar, centered on the item, as the
+/// Dock does, rather than at the pointer over the bar.
+@MainActor
+private func popUpBesideBar(_ menu: NSMenu, from view: NSView, edge: DockEdge) {
+  let gap: CGFloat = 8
+  // `size` counts Option alternates as rows of their own (hidden or not),
+  // though they only replace their item: measure without them.
+  let alternates = menu.items.enumerated().filter { $0.element.isAlternate }
+  for (_, item) in alternates { menu.removeItem(item) }
+  let size = menu.size
+  for (i, item) in alternates { menu.insertItem(item, at: i) }
+  let b = view.bounds
+  // Where the menu's top-left corner goes, in the view's coordinates.
+  let corner = switch edge {
+  case .bottom: CGPoint(x: b.midX - size.width / 2, y: b.maxY + gap + size.height)
+  case .left: CGPoint(x: b.maxX + gap, y: b.midY + size.height / 2)
+  case .right: CGPoint(x: b.minX - gap - size.width, y: b.midY + size.height / 2)
+  }
+  menu.popUp(positioning: nil, at: corner, in: view)
 }
 
 /// The app-name label the Dock shows while hovering an icon.

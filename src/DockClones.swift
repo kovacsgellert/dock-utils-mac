@@ -166,11 +166,19 @@ final class DockClones {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { DockModel.shared.refresh() }
   }
 
-  /// The right-click menu: a short version of the Dock's.
+  /// The right-click menu, after the Dock's: an app's windows, Options,
+  /// Show All Windows, Hide and Quit (Option: Hide Others, Force Quit).
+  /// Settings on the separator.
   private func menu(for item: DockItem) -> NSMenu? {
     let menu = NSMenu()
     func add(_ title: String, _ action: @escaping () -> Void) {
       menu.addItem(ActionMenuItem(title, action))
+    }
+    func addAlternate(_ title: String, _ action: @escaping () -> Void) {
+      let alt = ActionMenuItem(title, action)
+      alt.isAlternate = true
+      alt.keyEquivalentModifierMask = .option
+      menu.addItem(alt)
     }
     switch item.kind {
     case .app:
@@ -178,17 +186,36 @@ final class DockClones {
         NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == url.path }
       }
       if let app {
-        add(app.isHidden ? "Show" : "Hide") { _ = app.isHidden ? app.unhide() : app.hide() }
-      } else {
-        add("Open") { [weak self] in self?.click(item) }
+        for window in Self.windowItems(of: app) { menu.addItem(window) }
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
       }
       if let url = item.url {
-        add("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        let options = NSMenu()
+        options.addItem(ActionMenuItem("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) })
+        let sub = NSMenuItem(title: "Options", action: nil, keyEquivalent: "")
+        sub.submenu = options
+        menu.addItem(sub)
+        menu.addItem(.separator())
+      }
+      guard let app else {
+        add("Open") { [weak self] in self?.click(item) }
+        break
+      }
+      if let el = item.element {
+        // App Exposé, as the Dock item's own action.
+        add("Show All Windows") { AXUIElementPerformAction(el, "AXShowExpose" as CFString) }
+      }
+      add(app.isHidden ? "Show" : "Hide") { _ = app.isHidden ? app.unhide() : app.hide() }
+      addAlternate("Hide Others") {
+        for other in NSWorkspace.shared.runningApplications
+        where other != app && other.activationPolicy == .regular {
+          other.hide()
+        }
       }
       // Finder can't be quit from the Dock either.
-      if let app, app.bundleIdentifier != "com.apple.finder" {
-        menu.addItem(.separator())
+      if app.bundleIdentifier != "com.apple.finder" {
         add("Quit") { app.terminate() }
+        addAlternate("Force Quit") { app.forceTerminate() }
       }
     case .folder:
       add("Open") { [weak self] in self?.click(item) }
@@ -198,9 +225,36 @@ final class DockClones {
     case .trash:
       add("Open") { [weak self] in self?.click(item) }
     case .separator:
-      return nil
+      add("DockUtils Settings…") { SettingsWindowController.shared.show() }
+      add("Dock Settings…") {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Desktop-Settings.extension")!)
+      }
     }
     return menu
+  }
+
+  /// One item per titled window, as at the top of the Dock's menu: a
+  /// check on the active app's main window, a diamond on minimized ones.
+  /// Only windows on the current Space (all AX can see).
+  private static func windowItems(of app: NSRunningApplication) -> [NSMenuItem] {
+    AX.windows(pid: app.processIdentifier).compactMap { window in
+      guard let title = AX.value(window, kAXTitleAttribute) as? String, !title.isEmpty else { return nil }
+      let item = ActionMenuItem(title) {
+        if app.isHidden { app.unhide() }
+        AX.set(window, kAXMinimizedAttribute, false)
+        AX.set(window, kAXMainAttribute, true)
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        _ = app.activate()
+      }
+      if AX.bool(window, kAXMinimizedAttribute) {
+        item.state = .mixed
+        item.mixedStateImage = NSImage(systemSymbolName: "diamond.fill", accessibilityDescription: "Minimized")?
+          .withSymbolConfiguration(.init(pointSize: 7, weight: .regular))
+      } else if app.isActive, AX.bool(window, kAXMainAttribute) {
+        item.state = .on
+      }
+      return item
+    }
   }
 
   /// Files dropped on an app open with it; on the Trash they move there,
