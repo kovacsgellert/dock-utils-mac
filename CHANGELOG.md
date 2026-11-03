@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.3.0
+
+### New
+
+- Dock clones: right-click an app for a menu like the Dock's: its
+  windows (pick one to bring it forward), Options → Show in Finder,
+  Show All Windows, Hide and Quit, with Hide Others and Force Quit while
+  holding Option. Right-click the separator for DockUtils Settings or
+  Dock Settings
+
+### Changed
+
+- Dock clone menus open beside the bar, centered on the item, like the
+  Dock's, instead of at the pointer
+- Always-visible badges on a bottom Dock sit on the icon's top-right
+  corner
+
+### Fixed
+
+- Always-visible badges on a bottom Dock clone sit at the bar's top
+  edge instead of low over the icon
+- Badges no longer cover the Dock's or the clones' right-click menus
+
 ## 2.2.0
 
 ### New
