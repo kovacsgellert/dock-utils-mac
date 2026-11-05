@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.1
+
+### Fixed
+
+- Always-visible badges on a bottom Dock or Dock clone are back on the
+  icon's top-left corner: on the top right they covered the unread
+  counts of apps like Teams and Outlook
+
 ## 2.3.0
 
 ### New

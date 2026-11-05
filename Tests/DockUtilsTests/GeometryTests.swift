@@ -99,8 +99,9 @@ struct BadgeOriginTests {
 
   @Test func persistentBadgesStayInsideTheDock() {
     let bottom = OverlayManager.badgeOrigin(for: icon, edge: .bottom, dockInner: nil, diameter: 20, style: .persistent)
-    // On the icon's top-right corner, just over its right edge.
-    #expect(bottom.y + 20 <= icon.maxY && bottom.x + 20 == icon.maxX + 2)
+    // On the icon's top-left corner, clear of the app's own count badge.
+    #expect(icon.contains(CGRect(origin: bottom, size: CGSize(width: 20, height: 20))))
+    #expect(bottom.x == icon.minX + 2)
     // On a bottom clone: flush against (1 pt inside) the bar's top, which
     // is above the tile.
     let clone = OverlayManager.badgeOrigin(for: icon, edge: .bottom, dockInner: 60, diameter: 20, style: .persistent)

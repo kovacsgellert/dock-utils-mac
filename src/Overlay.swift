@@ -57,7 +57,7 @@ private extension NSShadow {
 enum BadgeStyle {
   /// Option-hold: large badges beside icons, toward the screen center.
   case hold
-  /// Always-visible: small badges inset in the icon's top-right corner,
+  /// Always-visible: small badges inset in the icon's top-left corner,
   /// fully inside the Dock perimeter.
   case persistent
 }
@@ -171,15 +171,15 @@ final class OverlayManager {
     switch style {
     case .persistent:
       // A corner of the icon, inset so the badge sits on the icon, inside
-      // the Dock perimeter: top-right with the Dock at the bottom; on a side
-      // Dock the bottom corner facing the screen center. Either way pushed
-      // toward the Dock's inner edge as far as still fits inside the Dock.
+      // the Dock perimeter: top-left with the Dock at the bottom, clear of
+      // the app's own count badge on the top right; on a side Dock the
+      // bottom corner facing the screen center. Either way pushed toward
+      // the Dock's inner edge as far as still fits inside the Dock.
       guard edge != .bottom else {
         // 1 pt inside the Dock's top; without it, the icon frame's top
         // (the real Dock's item frames already reach the bar's top).
-        // Slightly over the icon's right edge.
         let top = dockInner.map { $0 - 1 } ?? icon.maxY - cornerInset
-        return CGPoint(x: icon.maxX + 2 - diameter, y: top - diameter)
+        return CGPoint(x: icon.minX + cornerInset, y: top - diameter)
       }
       // The Dock's item frames are wider than the icon: use the square
       // in their middle so the badge lands on the icon's corner.
